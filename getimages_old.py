@@ -7,9 +7,7 @@ import pyrealsense2 as rs
 import cv2
 from tqdm import tqdm
 
-from calibrate_stereo import show_undistored
-from utils import get_undistort_functions, load_calib_data, get_l_r_image_fnames
-
+from utils import get_undistort_functions, load_calib_data
 
 # width = 3840
 # height = 2160
