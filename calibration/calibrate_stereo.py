@@ -249,7 +249,7 @@ if __name__ == '__main__':
     # eyeTracker_dir = args.eyeTracker_dir
     print(calib_imgs_dir)
     # calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=25, chessboard_x=8, chessboard_y=6)
-    # save_array(calib_dict, os.path.join(out_dir, 'calib_data.npy'))
+    save_array(calib_dict, os.path.join(out_dir, 'calib_data.npy'))
     calib_dir = load_calib_data(out_dir + "/calib_data.npy")
     # calib_dict = load_calib_data(out_dir + "/calib_data.npy")  # load_calib_data(out_dir + "/calib_data.npy")
     # show_undistored(calib_imgs_dir, calib_dict)
