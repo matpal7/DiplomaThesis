@@ -82,18 +82,28 @@ def calibrate(calib_img_folder, chessboard_size=(8,6), chessboard_dim= 20.0, deb
     print("Calibrating camera")
     retval, objectPoints, imagePoints1, imagePoints2, K_l, xi_l, D_l, K_r, xi_r, D_r, rvec, tvec, rvecs_L, tvecs_L, idx = cv2.omnidir.stereoCalibrate(obj_pts, img_pts_l, img_pts_r, img_dim_l, img_dim_r, None, None, None, None, None, None, 0, CRITERIA)
 
+    scale = 2.5
     new_K_l = np.copy(K_l)
     new_K_l[0, 1] = 0.0
-    # new_K_l[0, 0] = new_K_l[0, 0] / 2.5
-    # new_K_l[1, 1] = new_K_l[1, 1] / 2.5
+    # new_K_l[0, 0] = new_K_l[0, 0] / scale
+    # new_K_l[1, 1] = new_K_l[1, 1] / scale
+    new_K_l_wide = np.copy(K_l)
+    new_K_l_wide[0, 1] = 0.0
+    new_K_l_wide[0, 0] = new_K_l_wide[0, 0] / scale
+    new_K_l_wide[1, 1] = new_K_l_wide[1, 1] / scale
+
     new_K_r = np.copy(K_r)
     new_K_r[0, 1] = 0.0
-    # new_K_r[0, 0] = new_K_r[0, 0] / 2.5
-    # new_K_r[1, 1] = new_K_r[1, 1] / 2.5
+    # new_K_r[0, 0] = new_K_r[0, 0] / scale
+    # new_K_r[1, 1] = new_K_r[1, 1] /scale
+    new_K_r_wide = np.copy(K_r)
+    new_K_r_wide[0, 1] = 0.0
+    new_K_r_wide[0, 0] = new_K_r_wide[0, 0] / scale
+    new_K_r_wide[1, 1] = new_K_r_wide[1, 1] / scale
 
     calib_dict = {'K_l': K_l, 'new_K_l': new_K_l, 'xi_l': xi_l, 'D_l': D_l, 'K_r': K_r, 'new_K_r': new_K_r, 'xi_r': xi_r,
                   'D_r': D_r, 'rvec': rvec, 'tvec': tvec, 'rvecs_L': rvecs_L, 'tvecs_L': tvecs_L,
-                  'img_dim_l': img_dim_l, 'img_dim_r': img_dim_r}
+                  'img_dim_l': img_dim_l, 'img_dim_r': img_dim_r, 'new_K_l_wide': new_K_l_wide, 'new_K_r_wide': new_K_r_wide}
 
 
     return calib_dict

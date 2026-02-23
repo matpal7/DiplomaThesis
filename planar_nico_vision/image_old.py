@@ -8,7 +8,7 @@ from typing import List
 
 from numpy.lib.recfunctions import join_by
 
-from planar_nico_vision.utils import get_l_r_image_fnames, get_depth_rgb_image_fnames
+from planar_nico_vision.utils import get_l_r_image_fnames
 
 
 class Image():
@@ -48,18 +48,6 @@ class Image():
     #     self.bgrs = np.array([self.img[int(p[1]), int(p[0]), :] for p in self.p])
     #     self.X_ptrs = -np.ones(len(self.p)).astype(np.int)
 
-class ImageRealsense(Image):
-    def __init__(self, img_path):
-        self.pose = None
-        self.img_path = img_path
-        self.img_basename = os.path.basename(img_path)
-
-        self.img = cv2.imread(img_path)
-        if self.img is None:
-            raise FileNotFoundError(f"Cannot load image at path: {img_path}")
-
-        self.dims = (self.img.shape[1], self.img.shape[0])
-
 
 def rotation_matrix_from_vectors(vec1, vec2):
     """ Find the rotation matrix that aligns vec1 to vec2
@@ -87,34 +75,24 @@ def get_corrective_rotation(K, horizon):
     return R
 
 
-def get_undistort_functions(calib_dict, correct_horizon=False, rectify=True):
-    rvec = calib_dict['rvec']
-    tvec = calib_dict['tvec']
-
-    R, _ = cv2.Rodrigues(rvec)
-    T = tvec
-
-    R_l = np.eye(3)
-    R_r = np.eye(3)
+def get_undistort_functions(calib_dict, correct_horizon=False):
     if correct_horizon:
         R_l = get_corrective_rotation(calib_dict['new_K_l'], calib_dict['horizon_l'])
         R_r = get_corrective_rotation(calib_dict['new_K_r'], calib_dict['horizon_r'])
-    if rectify:
-        R_l, R_r = cv2.omnidir.stereoRectify(R, T)
-    new_K_l = calib_dict['new_K_l']
-    new_K_r = calib_dict['new_K_r']
-
+    else:
+        R_l = np.eye(3)
+        R_r = np.eye(3)
 
     map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(calib_dict['K_l'], calib_dict['D_l'], calib_dict['xi_l'],
-                                                         R_l, new_K_l, calib_dict['img_dim_l'],
-                                                         cv2.CV_32FC1, cv2.omnidir.RECTIFY_PERSPECTIVE)
+                                                         R_l, calib_dict['new_K_l'], calib_dict['img_dim_l'],
+                                                         cv2.CV_16SC2, cv2.omnidir.RECTIFY_PERSPECTIVE)
 
     def undistort_l(img):
         return cv2.remap(img, map1_l, map2_l, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
     map1_r, map2_r = cv2.omnidir.initUndistortRectifyMap(calib_dict['K_r'], calib_dict['D_r'], calib_dict['xi_r'],
-                                                         R_r, new_K_r, calib_dict['img_dim_r'],
-                                                         cv2.CV_32FC1, cv2.omnidir.RECTIFY_PERSPECTIVE)
+                                                         R_r, calib_dict['new_K_r'], calib_dict['img_dim_r'],
+                                                         cv2.CV_16SC2, cv2.omnidir.RECTIFY_PERSPECTIVE)
 
     def undistort_r(img):
         return cv2.remap(img, map1_r, map2_r, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
@@ -122,8 +100,8 @@ def get_undistort_functions(calib_dict, correct_horizon=False, rectify=True):
     return undistort_l, undistort_r
 
 
-def load_l_r_images_undistorted(calib_dict, img_dir, correct_horizon=False, max_imgs=None, rectify=True):
-    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=correct_horizon, rectify=rectify)
+def load_l_r_images_undistorted(calib_dict, img_dir, correct_horizon=False, max_imgs=None):
+    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=correct_horizon)
     fnames_l, fnames_r = get_l_r_image_fnames(img_dir, max_imgs=max_imgs)
 
     imgs_l = [Image(fname, undistort_l) for fname in fnames_l]
@@ -131,11 +109,6 @@ def load_l_r_images_undistorted(calib_dict, img_dir, correct_horizon=False, max_
 
     return imgs_l, imgs_r
 
-def load_realsense_rgb_images(img_dir, max_imgs= None):
-    fname_rgb = get_depth_rgb_image_fnames(img_dir, max_imgs=max_imgs)
-    imgs_rgb = [ImageRealsense(fname) for fname in fname_rgb]
-
-    return imgs_rgb
 
 # def extract_descriptors(imgs: List[Image], scale=4):
 #     sift = cv2.SIFT_create()
@@ -167,5 +140,4 @@ def load_realsense_rgb_images(img_dir, max_imgs= None):
 #         kp, des = sift.detectAndCompute(imgs[i].img, None)
 #
 #         imgs[i].set_kp_and_des(kp, des)
-
 

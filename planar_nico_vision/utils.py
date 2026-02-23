@@ -11,9 +11,9 @@ def load_calib_data(npy_path):
     return calib_dict
 
 
-def get_l_r_image_fnames(calib_img_folder, max_imgs=None):
-    glob_string_l = '{}/*_left.png'.format(calib_img_folder)
-    glob_string_r = '{}/*_right.png'.format(calib_img_folder)
+def get_l_r_image_fnames(img_folder, max_imgs=None):
+    glob_string_l = '{}/*_left.png'.format(img_folder)
+    glob_string_r = '{}/*_right.png'.format(img_folder)
     images_l = sorted(glob.glob(glob_string_l))
     images_r = sorted(glob.glob(glob_string_r))
 
@@ -22,6 +22,15 @@ def get_l_r_image_fnames(calib_img_folder, max_imgs=None):
         images_r = images_r[:max_imgs]
 
     return images_l, images_r
+
+def get_depth_rgb_image_fnames(img_folder, max_imgs=None):
+    glob_string_d = '{}/*_realsense.png'.format(img_folder)
+    images_d = sorted(glob.glob(glob_string_d))
+
+    if max_imgs is not None:
+        images_d = images_d[:max_imgs]
+
+    return images_d
 
 # def get_l_r_image_fnames(calib_img_folder, max_imgs=None):
 #     # Get all PNG files in folder
