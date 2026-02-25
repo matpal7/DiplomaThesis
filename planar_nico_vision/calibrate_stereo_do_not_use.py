@@ -5,7 +5,7 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 
-from image import get_undistort_functions
+from calibration.image import get_undistort_functions
 from utils import get_l_r_image_fnames
 
 CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
@@ -76,7 +76,7 @@ def save_calib_dict(calib_dict, out_folder):
     print("Wrote calib data to: ", npy_path)
 
 
-def calibrate(calib_img_folder, chessboard_size=(8,6), chessboard_dim= 20.0, debug=0, max_imgs=None):
+def calibrate(calib_img_folder, chessboard_size=(8,6), chessboard_dim= 21.0, debug=0, max_imgs=None):
     obj_pts, img_pts_l, img_pts_r, img_dim_l, img_dim_r = extract_chessboard_points(calib_img_folder, chessboard_size=chessboard_size, chessboard_dim=chessboard_dim, debug=debug, max_imgs=max_imgs)
 
     print("Calibrating camera")
@@ -222,7 +222,7 @@ def parse_args():
 if __name__ == '__main__':
     #args = parse_args()
     calib_imgs_dir = 'C:/Users/Lenovo/Desktop/DiplomaThesis/dataset/calibration/'
-    out_dir = 'C:/Users/Lenovo/Desktop/DiplomaThesis_git/NICO/out/'
+    out_dir = 'C:/Users/Lenovo/Desktop/DiplomaThesis_git/NICO/out'
     debug = 1
 
     calib_dict = calibrate(calib_imgs_dir, debug=debug)

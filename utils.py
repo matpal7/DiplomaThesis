@@ -1,39 +1,27 @@
 import glob
 import os
 
-import cv2
 import numpy as np
+import cv2
+import re
 
 
-def load_calib_data(npy_path):
-    calib_dict = np.load(npy_path, allow_pickle=True).flat[0]
+def load_dict(npy_path):
+    calib_dict = np.load(npy_path, allow_pickle=True).item()
     return calib_dict
 
+def save_dict(calib_dict, out_folder, file_name='calib_data.npy'):
+    if not os.path.exists(out_folder):
+        os.makedirs(out_folder)
 
-def save_array(array, path):
-    directory = os.path.dirname(path)
-
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-    np.save(path, array)
-
-
-def load_data(npy_path):
-    array = np.load(npy_path, allow_pickle=True)
-    return array
+    npy_path = os.path.join(out_folder, file_name)
+    np.save(npy_path, calib_dict)
+    print("Wrote calib data to: ", npy_path)
 
 
-def get_l_r_image_fnames(img_folder, max_imgs=None, datasetFolder=False, withGlasses=True, name='*', index=1):
-    if name == '': name = '*'
-    if not datasetFolder:
-        glob_string_l = '{}/*left*.png'.format(img_folder)
-        glob_string_r = '{}/*right*.png'.format(img_folder)
-    else:
-        glasses = 'with_glasses' if withGlasses else 'no_glasses'
-        glob_string_l = '{}/{}/{}/{}/*l*.png'.format(img_folder, name, glasses, index)
-        glob_string_r = '{}/{}/{}/{}/*r*.png'.format(img_folder, name, glasses, index)
-
+def get_l_r_image_fnames(img_folder, max_imgs=None):
+    glob_string_l = '{}/*_left.png'.format(img_folder)
+    glob_string_r = '{}/*_right.png'.format(img_folder)
     images_l = sorted(glob.glob(glob_string_l))
     images_r = sorted(glob.glob(glob_string_r))
 
@@ -43,42 +31,32 @@ def get_l_r_image_fnames(img_folder, max_imgs=None, datasetFolder=False, withGla
 
     return images_l, images_r
 
+def get_depth_rgb_image_fnames(img_folder, max_imgs=None):
+    glob_string_d = '{}/*_realsense.png'.format(img_folder)
+    images_d = sorted(glob.glob(glob_string_d))
 
-def get_undistort_functions(calib_dict, get_wide=False):
-    R_l = np.eye(3)
-    R_r = np.eye(3)
-    if get_wide:
-        new_K_l = calib_dict['new_K_l_wide']
-        new_K_r = calib_dict['new_K_r_wide']
-    else:
-        new_K_l = calib_dict['new_K_l']
-        new_K_r = calib_dict['new_K_r']
+    if max_imgs is not None:
+        images_d = images_d[:max_imgs]
 
-    map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(calib_dict['K_l'], calib_dict['D_l'], calib_dict['xi_l'],
-                                                         R_l, new_K_l, calib_dict['img_dim_l'],
-                                                         cv2.CV_16SC2, cv2.omnidir.RECTIFY_PERSPECTIVE)
+    return images_d
 
-    def undistort_l(img):
-        return cv2.remap(img, map1_l, map2_l, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-
-    map1_r, map2_r = cv2.omnidir.initUndistortRectifyMap(calib_dict['K_r'], calib_dict['D_r'], calib_dict['xi_r'],
-                                                         R_r, new_K_r, calib_dict['img_dim_r'],
-                                                         cv2.CV_16SC2, cv2.omnidir.RECTIFY_PERSPECTIVE)
-
-    def undistort_r(img):
-        return cv2.remap(img, map1_r, map2_r, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-
-    return undistort_l, undistort_r
-
-
-def crop_image(img, a, b, c, d):
-    return img.copy()[a:b, c:d]
-
-
-def show_image(img, frame_size=None):
-    if frame_size != None:
-        img = cv2.resize(img, frame_size)
-    cv2.imshow('image', img)
-    cv2.waitKey(0)
-
-
+# def get_l_r_image_fnames(calib_img_folder, max_imgs=None):
+#     # Get all PNG files in folder
+#     all_files = glob.glob(os.path.join(calib_img_folder, '*.png'))
+#
+#     # Filter only *_left.png and *_right.png, ignore *_realsense.png
+#     images_l = sorted([
+#         f for f in all_files
+#         if re.match(r'\d+_left\.png$', os.path.basename(f))
+#     ])
+#     images_r = sorted([
+#         f for f in all_files
+#         if re.match(r'\d+_right\.png$', os.path.basename(f))
+#     ])
+#
+#     # Limit number of images if requested
+#     if max_imgs is not None:
+#         images_l = images_l[:max_imgs]
+#         images_r = images_r[:max_imgs]
+#
+#     return images_l, images_r

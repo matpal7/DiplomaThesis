@@ -5,7 +5,6 @@ import time
 import numpy as np
 import pyrealsense2 as rs
 import cv2
-from tqdm import tqdm
 
 from utils import get_undistort_functions, load_calib_data
 
