@@ -1,3 +1,5 @@
+import os
+
 import cv2
 
 from calibration.image import load_l_r_images_undistorted, load_realsense_rgb_images
@@ -37,6 +39,21 @@ def show_undistorted_images(calib_dict, img_dir, correct_horizon=False, scale=4,
 
         print(f"Showing pair {img_number}. Press any key for next, ESC to exit.")
         key = cv2.waitKey(0)
+
+        if key == ord('s'):
+            out_folder = "C:/Users/matej/Desktop/DiplomaThesis_git/NICO/undistorted_output"
+            if not os.path.exists(out_folder):
+                os.makedirs(out_folder, exist_ok=True)
+
+            left_path = os.path.join(out_folder, f"{img_number}_left_undist.png")
+            right_path = os.path.join(out_folder, f"{img_number}_right_undist.png")
+
+            scale2 = 6
+            cv2.imwrite(left_path, img_l.get_small_img(scale2))
+            cv2.imwrite(right_path, img_r.get_small_img(scale2))
+
+            print("Saved undistorted images to:", out_folder)
+
 
         if key == 27:  # ESC key
             break

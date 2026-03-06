@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 
 import numpy as np
 import cv2
@@ -21,7 +22,7 @@ def extract_chessboard_points(calib_img_folder, undistort_l=None, undistort_r=No
     obj_pts = []
     img_pts_l = []
     img_pts_r = []
-
+    print("IMAGE FOLDER:", calib_img_folder)
     images_l, images_r = get_l_r_image_fnames(calib_img_folder, max_imgs)
     print("Finding calibration patterns")
     print(len(images_l))
@@ -137,11 +138,22 @@ def calibrate(calib_img_folder, chessboard_x=7, chessboard_y=4, chessboard_dim=3
     new_K_r_wide[0, 0] = new_K_r_wide[0, 0] / scale
     new_K_r_wide[1, 1] = new_K_r_wide[1, 1] / scale
 
+
     calib_dict = {'K_l': K_l, 'new_K_l': new_K_l, 'xi_l': xi_l, 'D_l': D_l, 'K_r': K_r, 'new_K_r': new_K_r,
                   'xi_r': xi_r,
                   'D_r': D_r, 'rvec': rvec, 'tvec': tvec, 'rvecs_L': rvecs_L, 'tvecs_L': tvecs_L,
                   'img_dim_l': img_dim_l, 'img_dim_r': img_dim_r, 'new_K_l_wide': new_K_l_wide,
                   'new_K_r_wide': new_K_r_wide}
+
+    print("LEFT CAMERA")
+    print("K_l:\n", K_l)
+    print("xi_l:", xi_l)
+    print("D_l:", D_l)
+
+    print("\nRIGHT CAMERA")
+    print("K_r:\n", K_r)
+    print("xi_r:", xi_r)
+    print("D_r:", D_r)
 
     return calib_dict
 
@@ -175,14 +187,14 @@ def parse_args():
 
 
 if __name__ == '__main__':
-    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dataset_dir = 'C:/Users/matej/Desktop/DiplomaThesis/dataset/'
-    calib_imgs_dir = os.path.join(dataset_dir, "calibration")
-    out_dir = 'C:/Users/matej/Desktop/DiplomaThesis_git/NICO/out'
+    parent_dir = Path(__file__).resolve().parent.parent
+    dataset_dir = parent_dir / "dataset_05032026"
+    calib_imgs_dir = dataset_dir / "depth" / "rgb"
+    out_dir = parent_dir / "NICO" / "out_2"
     debug = 2
 
 
-    # calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=25, chessboard_x=8, chessboard_y=6)
-    # save_dict(calib_dict, out_dir)
-    calib_dict = load_dict(out_dir + "/calib_data.npy")
+    calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=21.0, max_imgs=25, chessboard_x=8, chessboard_y=6)
+    save_dict(calib_dict, out_dir)
+    calib_dict = load_dict(out_dir / "calib_data.npy")
     show_undistorted_images(calib_dict, calib_imgs_dir)
