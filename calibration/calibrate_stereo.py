@@ -191,10 +191,12 @@ if __name__ == '__main__':
     dataset_dir = parent_dir / "dataset_05032026"
     calib_imgs_dir = dataset_dir / "depth" / "rgb"
     out_dir = parent_dir / "NICO" / "out_2"
+    out_dir2 = parent_dir / "NICO" / "out"
     debug = 2
 
 
-    calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=21.0, max_imgs=25, chessboard_x=8, chessboard_y=6)
-    save_dict(calib_dict, out_dir)
-    calib_dict = load_dict(out_dir / "calib_data.npy")
-    show_undistorted_images(calib_dict, calib_imgs_dir)
+    calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=21.0, max_imgs=10, chessboard_x=8, chessboard_y=6)
+    # save_dict(calib_dict, out_dir)
+    # calib_dict = load_dict(out_dir / "calib_data.npy")
+    # calib_dict = load_dict(out_dir2 / "calib_data.npy")
+    # show_undistorted_images(calib_dict, calib_imgs_dir)
