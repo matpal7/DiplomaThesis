@@ -10,7 +10,7 @@ SQUARES_HORIZONTALLY = 5
 SQUARES_VERTICALLY = 7
 SQUARE_LENGTH = 0.054
 MARKER_LENGTH = 0.037
-TRESHOLD_CORNERS = 15
+TRESHOLD_CORNERS = 12
 
 def create_charuco_board():
     aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
