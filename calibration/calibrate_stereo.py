@@ -57,7 +57,7 @@ def extract_chessboard_points(calib_img_folder, undistort_l=None, undistort_r=No
                 cv2.waitKey(1)
 
         elif debug > 0:
-            print("Corners not found!")
+            print("Corners not found!" ,fname_l)
 
     obj_pts = np.expand_dims(np.array(obj_pts, dtype=np.float64), -3)
     img_pts_l = np.array(img_pts_l, dtype=np.float64)
@@ -188,15 +188,15 @@ def parse_args():
 
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parent.parent
-    dataset_dir = parent_dir / "dataset_05032026"
-    calib_imgs_dir = dataset_dir / "depth" / "rgb"
+    dataset_dir = parent_dir / "dataset_11032026"
+    calib_imgs_dir = dataset_dir / "stereo_4k" / "rgb"
     out_dir = parent_dir / "NICO" / "out_2"
     out_dir2 = parent_dir / "NICO" / "out"
     debug = 2
 
 
-    calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=21.0, max_imgs=10, chessboard_x=8, chessboard_y=6)
+    calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=40, chessboard_x=8, chessboard_y=5)
     # save_dict(calib_dict, out_dir)
     # calib_dict = load_dict(out_dir / "calib_data.npy")
     # calib_dict = load_dict(out_dir2 / "calib_data.npy")
-    # show_undistorted_images(calib_dict, calib_imgs_dir)
+    show_undistorted_images(calib_dict, calib_imgs_dir)

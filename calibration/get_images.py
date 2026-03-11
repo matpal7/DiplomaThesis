@@ -10,13 +10,13 @@ import pyzed.sl as sl
 from utils import load_dict
 from calibration.image import get_undistort_functions
 
-# width_4K = 3840
-# height_4K = 2160
+width_4K = 3840
+height_4K = 2160
 width = 1280
 height = 720
 frame_size = (680, 480)
 frame_size_HD = (height, width)
-# frame_size_4K = (width_4K, height_4K)
+frame_size_4K = (width_4K, height_4K)
 
 def findMaxNumber(directory):
     max_number = -1
@@ -46,39 +46,80 @@ def opencv_open_camera(camera_index, frame_size):
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_size[1])
     return camera
 
+def _get_zed_resolution(width_px, height_px):
+    """Return the closest ZED SDK resolution enum for requested frame size."""
+    if width_px >= 2208 and height_px >= 1242:
+        return sl.RESOLUTION.HD2K
+    if width_px >= 1920 and height_px >= 1080:
+        return sl.RESOLUTION.HD1080
+    if width_px >= 1280 and height_px >= 720:
+        return sl.RESOLUTION.HD720
+    return sl.RESOLUTION.VGA
+
+
+def _open_zed_camera(frame_size_zed=(1280, 720), zed_depth_mode=sl.DEPTH_MODE.QUALITY):
+    zed = sl.Camera()
+    init_params = sl.InitParameters()
+    init_params.camera_resolution = _get_zed_resolution(*frame_size_zed)
+    init_params.depth_mode = zed_depth_mode
+    init_params.coordinate_units = sl.UNIT.MILLIMETER
+
+    status = zed.open(init_params)
+    if status != sl.ERROR_CODE.SUCCESS:
+        print("ZED camera open failed:", status)
+        return None
+    return zed
+
+def _make_labeled_tile(image, label, frame_size_display):
+    if image is None:
+        tile = np.zeros((frame_size_display[1], frame_size_display[0], 3), dtype=np.uint8)
+    else:
+        tile = cv2.resize(image, frame_size_display)
+
+    cv2.rectangle(tile, (0, 0), (220, 28), (0, 0, 0), -1)
+    cv2.putText(tile, label, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+    return tile
+
+
+
 def save_cameras_on_click(
         camara_index_left,
         camera_index_right,
         calib_dict=None,
-        frame_size_RealSense=(1280, 720),
+        frame_size_stereo=(1280, 720),
+        frame_size_realsense_rgb=(1280, 720),
+        frame_size_realsense_depth=(1280, 720),
+        frame_size_zed=(1280, 720),
         save_dir="dataset_default",
-        use_realsense=True):
+        use_realsense = True,
+        use_zed = True):
 
-    """
-    Captures and displays frames from two cameras and optionally a RealSense device.
+    """C
+    aptures and displays frames from stereo cameras and optionally RealSense / ZED M.
 
     SPACE – capture frame
     S     – save frame
     ESC   – exit
 
-    If use_realsense=False → only left/right cameras are used.
+    Defaults are tuned for Intel RealSense D435i and ZED M (HD720 at 30 FPS).
+    Depth is saved for every enabled depth camera.
     """
 
-    frame_size_capture = frame_size
+
     frame_size_display = (680, 480)
 
     rgb_dir = os.path.join(save_dir, "rgb")
     depth_dir = os.path.join(save_dir, "depth")
 
     os.makedirs(rgb_dir, exist_ok=True)
-    if use_realsense:
+    if use_realsense or use_zed:
         os.makedirs(depth_dir, exist_ok=True)
 
     # ---------------------------
     # Open normal cameras
     # ---------------------------
-    cap_l = opencv_open_camera(camara_index_left, frame_size_capture)
-    cap_r = opencv_open_camera(camera_index_right, frame_size_capture)
+    cap_l = opencv_open_camera(camara_index_left, frame_size_stereo)
+    cap_r = opencv_open_camera(camera_index_right, frame_size_stereo)
 
     # ---------------------------
     # Setup RealSense (optional)
@@ -87,10 +128,20 @@ def save_cameras_on_click(
         pipeline = rs.pipeline()
         config = rs.config()
 
-        config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-        config.enable_stream(rs.stream.infrared, 1, 1280, 720, rs.format.y8, 30)
-        config.enable_stream(rs.stream.infrared, 2, 1280, 720, rs.format.y8, 30)
-        config.enable_stream(rs.stream.depth, 1280, 720, rs.format.z16, 30)
+        config.enable_stream(
+            rs.stream.color,
+            frame_size_realsense_rgb[0],
+            frame_size_realsense_rgb[1],
+            rs.format.bgr8,
+            30,
+        )
+        config.enable_stream(
+            rs.stream.depth,
+            frame_size_realsense_depth[0],
+            frame_size_realsense_depth[1],
+            rs.format.z16,
+            30,
+        )
 
         pipeline.start(config)
 
@@ -98,6 +149,15 @@ def save_cameras_on_click(
             pipeline.wait_for_frames()
 
         align = rs.align(rs.stream.color)
+
+    # ---------------------------
+    # Setup ZED (optional)
+    # ---------------------------
+    if use_zed:
+        zed = _open_zed_camera(frame_size_zed=frame_size_zed, zed_depth_mode=sl.DEPTH_MODE.QUALITY)
+        if zed is None:
+            use_zed = False
+            print("Continuing without ZED stream.")
 
     # ---------------------------
     # Undistortion
@@ -131,6 +191,10 @@ def save_cameras_on_click(
 
         if img_l is None or img_r is None:
             continue
+        img_realsense = None
+        depth_image = None
+        img_zed = None
+        depth_zed = None
 
         # ---------------------------
         # Capture RealSense (optional)
@@ -143,7 +207,7 @@ def save_cameras_on_click(
             depth_frame = rs_frames.get_depth_frame()
 
             if color_frame and depth_frame:
-                img_RealSense = np.asanyarray(color_frame.get_data())
+                img_realsense = np.asanyarray(color_frame.get_data())
                 depth_image = np.asanyarray(depth_frame.get_data())
 
                 depth_colored = cv2.applyColorMap(
@@ -153,7 +217,30 @@ def save_cameras_on_click(
             else:
                 print("Failed to capture RealSense frames")
                 continue
+                # ---------------------------
+                # Capture ZED (optional)
+                # ---------------------------
+        if use_zed:
+            zed_img_mat = sl.Mat()
+            zed_depth_mat = sl.Mat()
 
+            if zed.grab() == sl.ERROR_CODE.SUCCESS:
+                zed.retrieve_image(zed_img_mat, sl.VIEW.LEFT)
+                zed.retrieve_measure(zed_depth_mat, sl.MEASURE.DEPTH)
+
+                img_zed = zed_img_mat.get_data()
+                img_zed = cv2.cvtColor(img_zed, cv2.COLOR_BGRA2BGR)
+
+                depth_zed = zed_depth_mat.get_data().copy()
+
+                depth_zed_display = np.nan_to_num(depth_zed, nan=0.0, posinf=0.0, neginf=0.0)
+                depth_zed_colored = cv2.applyColorMap(
+                    cv2.convertScaleAbs(depth_zed_display, alpha=0.02),
+                    cv2.COLORMAP_TURBO,
+                )
+            else:
+                print("Failed to capture ZED frames")
+                continue
         # ---------------------------
         # Show preview
         # ---------------------------
@@ -163,10 +250,22 @@ def save_cameras_on_click(
         ]
 
         if use_realsense:
-            views.append(cv2.resize(img_RealSense, frame_size_display))
+            views.append(cv2.resize(img_realsense, frame_size_display))
+        if use_zed:
+            views.append(cv2.resize(img_zed, frame_size_display))
 
-        img_concat = cv2.hconcat(views)
-        cv2.imshow("Captured Frames", img_concat)
+        # ---------------------------
+        # Show 2x2 preview
+        # ---------------------------
+        top_left = _make_labeled_tile(img_l, "Stereo Left", frame_size_display)
+        top_right = _make_labeled_tile(img_r, "Stereo Right", frame_size_display)
+        bottom_left = _make_labeled_tile(img_realsense, "RealSense RGB", frame_size_display)
+        bottom_right = _make_labeled_tile(img_zed, "ZED RGB", frame_size_display)
+
+        top_row = cv2.hconcat([top_left, top_right])
+        bottom_row = cv2.hconcat([bottom_left, bottom_right])
+        preview = cv2.vconcat([top_row, bottom_row])
+        cv2.imshow("Captured Frames", preview)
 
         # ---------------------------
         # Save
@@ -177,8 +276,11 @@ def save_cameras_on_click(
             cv2.imwrite(os.path.join(rgb_dir, f"{num}_right.png"), img_r_origin)
 
             if use_realsense:
-                cv2.imwrite(os.path.join(rgb_dir, f"{num}_realsense.png"), img_RealSense)
-                np.save(os.path.join(depth_dir, f"{num}_depth.npy"), depth_image)
+                cv2.imwrite(os.path.join(rgb_dir, f"{num}_realsense.png"), img_realsense)
+                np.save(os.path.join(depth_dir, f"{num}_realsense_depth.npy"), depth_image)
+            if use_zed:
+                cv2.imwrite(os.path.join(rgb_dir, f"{num}_zed.png"), img_zed)
+                np.save(os.path.join(depth_dir, f"{num}_zed_depth.npy"), depth_zed)
 
             print(f"Saved capture {num}")
             num += 1
@@ -194,6 +296,8 @@ def save_cameras_on_click(
 
     if use_realsense:
         pipeline.stop()
+    if use_zed:
+        zed.close()
 
     cv2.destroyAllWindows()
 
@@ -280,9 +384,9 @@ if __name__ == '__main__':
     print(out_dir + "/calib_data.npy")
 
     # calib_dir = load_dict(out_dir + "/calib_data.npy")
-    dataset_dir = os.path.join(parent_dir, 'dataset_09032026')
-    depth_dir = os.path.join(dataset_dir, 'stereo')
-    save_cameras_on_click(1,0, save_dir=depth_dir, use_realsense=False)
+    dataset_dir = os.path.join(parent_dir, 'dataset_11032026')
+    depth_dir = os.path.join(dataset_dir, 'stereo_4k_relative_pose')
+    save_cameras_on_click(4,2, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True)
 
     # #show_undistored(depth_dir + "/rgb", calib_dir)
 
