@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,7 +30,6 @@ def _extract_first(calib: dict, keys: tuple[str, ...]):
             return calib[key]
     return None
 
-
 def load_yaml_calibration(yaml_path: Path) -> dict:
     fs = cv2.FileStorage(str(yaml_path), cv2.FILE_STORAGE_READ)
     if not fs.isOpened():
@@ -55,8 +55,8 @@ def load_camera_calibration(path: Path, model: str) -> tuple[np.ndarray, np.ndar
     else:
         calib = load_dict(str(path))
 
-    K = _extract_first(calib, ("K", "K_l", "K_r"))
-    D = _extract_first(calib, ("dist", "D", "D_l", "D_r"))
+    K = _extract_first(calib, ("K", "K_l"))
+    D = _extract_first(calib, ("dist", "D", "D_l"))
 
     if K is None or D is None:
         raise KeyError(
@@ -64,12 +64,13 @@ def load_camera_calibration(path: Path, model: str) -> tuple[np.ndarray, np.ndar
             "K/K_l/K_r and dist/D/D_l/D_r."
         )
 
-    xi = _extract_first(calib, ("xi", "xi_l", "xi_r"))
+
 
     K_arr = np.asarray(K, dtype=np.float64).reshape(3, 3)
     D_arr = np.asarray(D, dtype=np.float64).reshape(-1, 1)
 
     if model == "omni":
+        xi = _extract_first(calib, ("xi", "xi_l"))
         if xi is None:
             raise KeyError(f"Camera model is 'omni' but xi is missing in calibration file: {path}")
         xi_arr = np.asarray(xi, dtype=np.float64).reshape(1, 1)
@@ -353,19 +354,9 @@ def estimate_relative_pose(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Estimate relative pose between two cameras from ChArUco image pairs.")
-    parser.add_argument("--image-dir", type=Path, required=True, help="Directory with synchronized images from both cameras.")
-    parser.add_argument(
-        "--cam1-calib",
-        type=Path,
-        required=True,
-        help="Calibration file for camera 1 (.npy/.npz dictionary or .yaml/.yml with K,D).",
-    )
-    parser.add_argument(
-        "--cam2-calib",
-        type=Path,
-        required=True,
-        help="Calibration file for camera 2 (.npy/.npz dictionary or .yaml/.yml with K,D).",
-    )
+    parser.add_argument("--image-dir", type=Path, required=False, help="Directory with synchronized images from both cameras.")
+    parser.add_argument("--cam1-calib", type=Path, required=False, help="Calibration .npy for reference camera (cam1).")
+    parser.add_argument("--cam2-calib", type=Path, required=False, help="Calibration .npy for target camera (cam2).")
     parser.add_argument("--cam1-suffix", default="_left.png", help="Filename suffix for camera 1 images.")
     parser.add_argument("--cam2-suffix", default="_realsense.png", help="Filename suffix for camera 2 images.")
     parser.add_argument(
@@ -380,12 +371,25 @@ def parse_args() -> argparse.Namespace:
         default="pinhole",
         help="Camera model for camera 2. Use 'omni' for omnidirectional cameras with xi.",
     )
-    parser.add_argument("--output", type=Path, required=True, help="Output .npy path.")
+    parser.add_argument("--output", type=Path, required=False, help="Output .npy path.")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    parent_dir = Path(__file__).resolve().parent.parent.parent
+
+    dataset_dir = parent_dir / 'dataset_11032026'
+    depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
+    out_dir = parent_dir / "NICO" / "out_1103"
+    calib_dirc_left_path =  out_dir / "calib_data.npy"
+    calib_dirc_realsense = out_dir / "realsense_calibration.yaml"
+
+
+    args.image_dir = depth_dir
+    args.cam1_calib = calib_dirc_left_path
+    args.cam2_calib = calib_dirc_realsense
+    args.output = out_dir
     estimate_relative_pose(
         image_dir=args.image_dir,
         cam1_calib=args.cam1_calib,

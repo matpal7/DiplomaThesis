@@ -90,7 +90,6 @@ def get_undistort_functions(calib_dict, correct_horizon=False):
     else:
         R_l = np.eye(3)
         R_r = np.eye(3)
-    print(calib_dict['img_dim_l'])
     map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(calib_dict['K_l'], calib_dict['D_l'], calib_dict['xi_l'],
                                                          R_l, calib_dict['new_K_l'], calib_dict['img_dim_l'],
                                                          cv2.CV_16SC2, cv2.omnidir.RECTIFY_PERSPECTIVE)

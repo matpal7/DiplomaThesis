@@ -107,8 +107,8 @@ def save_cameras_on_click(
         use_realsense = True,
         use_zed = True):
 
-    """C
-    aptures and displays frames from stereo cameras and optionally RealSense / ZED M.
+    """
+    Captures and displays frames from stereo cameras and optionally RealSense / ZED M.
 
     SPACE – capture frame
     S     – save frame
