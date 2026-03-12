@@ -14,7 +14,7 @@ So you do **not** need to pre-undistort images yourself.
 - Intrinsics for **left stereo camera** in `.npy` dict.
   - For pinhole: `K` + `dist` (or `D`).
   - For omni: `K` + distortion (`dist`/`D`) + `xi`.
-- Intrinsics for **RGB stream of RGBD camera** in `.npy` dict.
+- Intrinsics for **RGB stream of RGBD camera** in `.yaml`/`.yml` (with `K`, `D`) or in `.npy` dict.
 - Synchronized image pairs in one folder, for example:
   - `000_left.png`
   - `000_realsense.png`
@@ -29,7 +29,7 @@ From repository root:
 python calibration/ChArUco/charuco_relative_pose_pnp.py \
   --image-dir dataset_09032026/depth/rgb \
   --cam1-calib NICO/out_2/left_calib.npy \
-  --cam2-calib NICO/out_2/realsense_calib.npy \
+  --cam2-calib calibration/realsense_calibration.yaml \
   --cam1-suffix _left.png \
   --cam2-suffix _realsense.png \
   --cam1-model omni \

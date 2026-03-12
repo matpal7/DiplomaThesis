@@ -30,8 +30,30 @@ def _extract_first(calib: dict, keys: tuple[str, ...]):
     return None
 
 
+def load_yaml_calibration(yaml_path: Path) -> dict:
+    fs = cv2.FileStorage(str(yaml_path), cv2.FILE_STORAGE_READ)
+    if not fs.isOpened():
+        raise FileNotFoundError(f"Cannot open calibration yaml file: {yaml_path}")
+
+    K = fs.getNode("K").mat()
+    D = fs.getNode("D").mat()
+    fs.release()
+
+    if K is None or D is None:
+        raise ValueError(f"Calibration YAML must contain nodes 'K' and 'D': {yaml_path}")
+
+    return {
+        "K": K,
+        "D": D,
+    }
+
+
 def load_camera_calibration(path: Path, model: str) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    calib = load_dict(str(path))
+    suffix = path.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        calib = load_yaml_calibration(path)
+    else:
+        calib = load_dict(str(path))
 
     K = _extract_first(calib, ("K", "K_l", "K_r"))
     D = _extract_first(calib, ("dist", "D", "D_l", "D_r"))
@@ -332,8 +354,18 @@ def estimate_relative_pose(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Estimate relative pose between two cameras from ChArUco image pairs.")
     parser.add_argument("--image-dir", type=Path, required=True, help="Directory with synchronized images from both cameras.")
-    parser.add_argument("--cam1-calib", type=Path, required=True, help="Calibration .npy for reference camera (cam1).")
-    parser.add_argument("--cam2-calib", type=Path, required=True, help="Calibration .npy for target camera (cam2).")
+    parser.add_argument(
+        "--cam1-calib",
+        type=Path,
+        required=True,
+        help="Calibration file for camera 1 (.npy/.npz dictionary or .yaml/.yml with K,D).",
+    )
+    parser.add_argument(
+        "--cam2-calib",
+        type=Path,
+        required=True,
+        help="Calibration file for camera 2 (.npy/.npz dictionary or .yaml/.yml with K,D).",
+    )
     parser.add_argument("--cam1-suffix", default="_left.png", help="Filename suffix for camera 1 images.")
     parser.add_argument("--cam2-suffix", default="_realsense.png", help="Filename suffix for camera 2 images.")
     parser.add_argument(
