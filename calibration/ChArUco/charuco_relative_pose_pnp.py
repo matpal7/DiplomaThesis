@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from sympy import false
 
 from calibration.ChArUco.charuco_detection import (
     TRESHOLD_CORNERS,
@@ -23,7 +24,7 @@ class PoseSample:
     reproj_right: float
 
 
-def load_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray]:
+def load_camera_calibration(path: Path, stereo_calibration=false) -> tuple[np.ndarray, np.ndarray]:
     calib = load_dict(str(path))
     if "K" not in calib or "dist" not in calib:
         raise KeyError(f"Calibration file {path} must contain keys 'K' and 'dist'.")

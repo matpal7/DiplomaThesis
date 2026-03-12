@@ -1,6 +1,7 @@
 import os
 import re
 import time
+from pathlib import Path
 
 import numpy as np
 import pyrealsense2 as rs
@@ -79,6 +80,18 @@ def _make_labeled_tile(image, label, frame_size_display):
     cv2.rectangle(tile, (0, 0), (220, 28), (0, 0, 0), -1)
     cv2.putText(tile, label, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
     return tile
+
+def _get_omni_undistort_functions(calib_dict):
+    """Return omnidirectional undistortion functions when calibration data is available."""
+    if calib_dict is None:
+        return None, None
+
+    try:
+        return get_undistort_functions(calib_dict, correct_horizon=False)
+    except Exception as exc:
+        print(f"Failed to initialize omnidirectional undistortion: {exc}")
+        return None, None
+
 
 
 
@@ -162,8 +175,7 @@ def save_cameras_on_click(
     # ---------------------------
     # Undistortion
     # ---------------------------
-    if calib_dict is not None:
-        undistort_l, undistort_r = get_undistort_functions(calib_dict, get_wide=False)
+    undistort_l, undistort_r = _get_omni_undistort_functions(calib_dict)
 
     print("Press SPACE to capture, S to save, ESC to exit.")
 
@@ -185,7 +197,7 @@ def save_cameras_on_click(
         img_l_origin = img_l.copy()
         img_r_origin = img_r.copy()
 
-        if calib_dict is not None:
+        if undistort_l is not None and undistort_r is not None:
             img_l = undistort_l(img_l)
             img_r = undistort_r(img_r)
 
@@ -379,14 +391,16 @@ def show_zed_image():
 
 if __name__ == '__main__':
     chessboard_size = (8,6)
-    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out_dir = os.path.join(parent_dir, 'out')
-    print(out_dir + "/calib_data.npy")
+    parent_dir = Path(__file__).resolve().parent.parent
 
     # calib_dir = load_dict(out_dir + "/calib_data.npy")
     dataset_dir = os.path.join(parent_dir, 'dataset_11032026')
-    depth_dir = os.path.join(dataset_dir, 'stereo_4k_relative_pose')
-    save_cameras_on_click(4,2, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True)
+    depth_dir = os.path.join(dataset_dir, 'stereo_4k_depth')
+
+    out_dir = parent_dir / "NICO" / "out_1103"
+    calib_dict = load_dict(out_dir / "calib_data.npy")
+
+    save_cameras_on_click(4,2, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict)
 
     # #show_undistored(depth_dir + "/rgb", calib_dir)
 
