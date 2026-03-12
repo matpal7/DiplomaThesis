@@ -13,8 +13,10 @@ from calibration.ChArUco.charuco_detection import (
     TRESHOLD_CORNERS,
     create_charuco_board,
 )
+from calibration.image import get_undistort_functions
 from utils import load_dict, save_dict
 
+MAX_REPROJ_ERR = 2.0
 
 @dataclass
 class PoseSample:
@@ -23,6 +25,8 @@ class PoseSample:
     reproj_cam1: float
     reproj_cam2: float
 
+def resize_to_frame(img, frame_size=(680, 480)):
+    return cv2.resize(img, frame_size, interpolation=cv2.INTER_AREA)
 
 def _extract_first(calib: dict, keys: tuple[str, ...]):
     for key in keys:
@@ -69,29 +73,33 @@ def load_camera_calibration(path: Path, model: str) -> tuple[np.ndarray, np.ndar
     K_arr = np.asarray(K, dtype=np.float64).reshape(3, 3)
     D_arr = np.asarray(D, dtype=np.float64).reshape(-1, 1)
 
-    if model == "omni":
-        xi = _extract_first(calib, ("xi", "xi_l"))
-        if xi is None:
-            raise KeyError(f"Camera model is 'omni' but xi is missing in calibration file: {path}")
-        xi_arr = np.asarray(xi, dtype=np.float64).reshape(1, 1)
-        return K_arr, D_arr, xi_arr
-
-    return K_arr, D_arr, None
+    return K_arr, D_arr
 
 
 def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> list[tuple[Path, Path, str]]:
-    cam1_images = sorted(image_dir.glob(f"*{cam1_suffix}"))
+
+    def numeric_key(p: Path):
+        name = p.name
+        num = name[:-len(cam1_suffix)]
+        return int(num)
+
+    cam1_images = sorted(image_dir.glob(f"*{cam1_suffix}"), key=numeric_key)
+
     cam2_map = {
-        p.name[: -len(cam2_suffix)]: p for p in image_dir.glob(f"*{cam2_suffix}")
+        p.name[:-len(cam2_suffix)]: p for p in image_dir.glob(f"*{cam2_suffix}")
     }
 
     pairs: list[tuple[Path, Path, str]] = []
+
     for cam1 in cam1_images:
-        key = cam1.name[: -len(cam1_suffix)]
+        key = cam1.name[:-len(cam1_suffix)]
         cam2 = cam2_map.get(key)
+
         if cam2 is None:
             continue
+
         pairs.append((cam1, cam2, key))
+
     return pairs
 
 
@@ -149,15 +157,19 @@ def pose_from_charuco(
     detector: cv2.aruco.ArucoDetector,
     K: np.ndarray,
     dist: np.ndarray,
-    model: str,
-    xi: np.ndarray | None,
+    undistored_function=None,
 ) -> tuple[np.ndarray, np.ndarray, float] | tuple[None, None, None]:
     image = cv2.imread(str(image_path))
     if image is None:
         return None, None, None
 
+    if undistored_function is not None:
+        image = undistored_function(image)
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     marker_corners, marker_ids, _ = detector.detectMarkers(gray)
+
+
 
     if marker_ids is None or len(marker_ids) == 0:
         return None, None, None
@@ -176,32 +188,21 @@ def pose_from_charuco(
     object_points = board.getChessboardCorners()[ids].reshape(-1, 1, 3).astype(np.float64)
     image_points = charuco_corners.reshape(-1, 1, 2).astype(np.float64)
 
-    if model == "omni":
-        if xi is None:
-            raise ValueError("xi is required for omni camera model.")
+    ok, rvec, tvec = cv2.solvePnP(
+        object_points,
+        image_points,
+        K,
+        dist,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
+    if not ok:
+        return None, None, None
 
-        image_points_norm = undistort_omni_points_compat(image_points, K, dist, xi)
-        ok, rvec, tvec = cv2.solvePnP(
-            object_points,
-            image_points_norm,
-            np.eye(3, dtype=np.float64),
-            None,
-            flags=cv2.SOLVEPNP_ITERATIVE,
-        )
-        if not ok:
-            return None, None, None
-
-        projected = project_omni_points_compat(object_points, rvec, tvec, K, dist, xi)
-    else:
-        ok, rvec, tvec = cv2.solvePnP(object_points, image_points, K, dist, flags=cv2.SOLVEPNP_ITERATIVE)
-        if not ok:
-            return None, None, None
-
-        projected, _ = cv2.projectPoints(object_points, rvec, tvec, K, dist)
-
+    projected, _ = cv2.projectPoints(object_points, rvec, tvec, K, dist)
     reproj_error = float(
         np.mean(np.linalg.norm(projected.reshape(-1, 2) - image_points.reshape(-1, 2), axis=1))
     )
+
     return rvec, tvec, reproj_error
 
 
@@ -249,8 +250,13 @@ def estimate_relative_pose(
     cam1_model: str,
     cam2_model: str,
 ) -> None:
-    K_cam1, dist_cam1, xi_cam1 = load_camera_calibration(cam1_calib, cam1_model)
-    K_cam2, dist_cam2, xi_cam2 = load_camera_calibration(cam2_calib, cam2_model)
+    K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, cam2_model)
+
+    cam1_calib_dict = load_dict(cam1_calib)
+    K_cam1 = cam1_calib_dict["new_K_l"]
+    dist_cam1 = np.zeros((4, 1), dtype=np.float64)
+
+    undistored_l, _ = get_undistort_functions(cam1_calib_dict, correct_horizon=False)
 
     _, board, detector = create_charuco_board()
     pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix)
@@ -261,11 +267,18 @@ def estimate_relative_pose(
     samples: list[PoseSample] = []
 
     for cam1_path, cam2_path, pair_name in pairs:
-        rvec_1, tvec_1, err_1 = pose_from_charuco(cam1_path, board, detector, K_cam1, dist_cam1, cam1_model, xi_cam1)
-        rvec_2, tvec_2, err_2 = pose_from_charuco(cam2_path, board, detector, K_cam2, dist_cam2, cam2_model, xi_cam2)
+        rvec_1, tvec_1, err_1 = pose_from_charuco(cam1_path, board, detector, K_cam1, dist_cam1, undistored_function=undistored_l)
+        rvec_2, tvec_2, err_2 = pose_from_charuco(cam2_path, board, detector, K_cam2, dist_cam2)
 
         if rvec_1 is None or rvec_2 is None:
             print(f"{pair_name}: skipped (insufficient ChArUco corners in at least one image)")
+            continue
+
+        if err_1 > MAX_REPROJ_ERR or err_2 > MAX_REPROJ_ERR:
+            print(
+                f"{pair_name}: rejected (reproj_cam1={err_1:.3f}px "
+                f"reproj_cam2={err_2:.3f}px)"
+            )
             continue
 
         T_cam1_board = rt_to_T(rvec_1, tvec_1)
@@ -289,6 +302,7 @@ def estimate_relative_pose(
     T_avg[:3, 3] = t_avg
     rvec_avg, tvec_avg = T_to_rt(T_avg)
     baseline = float(np.linalg.norm(t_avg))
+    print("BASELINE: ", baseline)
 
     rot_dev = [rotation_angle_deg(R, R_avg) for R in rotations]
     trans_dev = [float(np.linalg.norm(t - t_avg)) for t in translations]
@@ -321,7 +335,7 @@ def estimate_relative_pose(
         ],
     }
 
-    save_dict(output, str(output_path.parent), output_path.name)
+    # save_dict(output, str(output_path.parent), output_path.name)
 
     serializable = {
         "num_pairs_total": output["num_pairs_total"],
@@ -339,9 +353,9 @@ def estimate_relative_pose(
         "camera_model_cam1": output["camera_model_cam1"],
         "camera_model_cam2": output["camera_model_cam2"],
     }
-    json_path = output_path.with_suffix(".json")
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(serializable, f, indent=2)
+    # json_path = output_path.with_suffix(".json")
+    # with open(json_path, "w", encoding="utf-8") as f:
+    #     json.dump(serializable, f, indent=2)
 
     print("\n=== Relative pose (cam2 <- cam1) ===")
     print(T_avg)
@@ -349,7 +363,7 @@ def estimate_relative_pose(
     print("tvec_cam2_cam1:", tvec_avg.reshape(3))
     print(f"translation magnitude: {baseline:.6f}")
     print(f"Saved: {output_path}")
-    print(f"Saved: {json_path}")
+    # print(f"Saved: {json_path}")
 
 
 def parse_args() -> argparse.Namespace:
