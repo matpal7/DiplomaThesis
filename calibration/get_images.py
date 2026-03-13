@@ -16,8 +16,12 @@ height_4K = 2160
 width = 1280
 height = 720
 frame_size = (680, 480)
-frame_size_HD = (height, width)
+frame_size_HD = (width, height)
 frame_size_4K = (width_4K, height_4K)
+
+FRAME_SIZE_REALSENSE = (1280, 720)
+FRAME_SIZE_ZED = (1280, 720)
+FRAME_SIZE_STEREO = frame_size_4K
 
 def findMaxNumber(directory):
     max_number = -1
@@ -99,10 +103,10 @@ def save_cameras_on_click(
         camara_index_left,
         camera_index_right,
         calib_dict=None,
-        frame_size_stereo=(1280, 720),
-        frame_size_realsense_rgb=(1280, 720),
-        frame_size_realsense_depth=(1280, 720),
-        frame_size_zed=(1280, 720),
+        frame_size_stereo=FRAME_SIZE_STEREO,
+        frame_size_realsense_rgb=FRAME_SIZE_REALSENSE,
+        frame_size_realsense_depth=FRAME_SIZE_REALSENSE,
+        frame_size_zed=FRAME_SIZE_ZED,
         save_dir="dataset_default",
         use_realsense = True,
         use_zed = True):
@@ -320,33 +324,7 @@ def create_dataset_directory(name="dataset"):
     os.makedirs(save_dir, exist_ok=True)
     return save_dir
 
-def save_realsense_calibration(filename="realsense_calibration.yaml"):
 
-    pipeline = rs.pipeline()
-    config = rs.config()
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-
-    profile = pipeline.start(config)
-
-    stream = profile.get_stream(rs.stream.color)
-    intr = stream.as_video_stream_profile().get_intrinsics()
-
-    pipeline.stop()
-
-    K = np.array([
-        [intr.fx, 0, intr.ppx],
-        [0, intr.fy, intr.ppy],
-        [0, 0, 1]
-    ])
-
-    D = np.array(intr.coeffs)
-
-    fs = cv2.FileStorage(filename, cv2.FILE_STORAGE_WRITE)
-    fs.write("K", K)
-    fs.write("D", D)
-    fs.release()
-
-    print("Calibration saved to", filename)
 
 def read_zed_image():
     zed = sl.Camera()

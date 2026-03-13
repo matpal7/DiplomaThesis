@@ -118,7 +118,6 @@ def calibrate(calib_img_folder, chessboard_x=7, chessboard_y=4, chessboard_dim=3
     #               'img_dim_r': img_dim_r,
     #               'new_K_l_wide': new_K_l_wide, 'new_K_r_wide': new_K_r_wide, 'P_l': P_l, 'P_r': P_r,
     #               'new_P_l': new_P_l, 'new_P_r': new_P_r}
-
     scale = 2.5
     new_K_l = np.copy(K_l)
     new_K_l[0, 1] = 0.0
