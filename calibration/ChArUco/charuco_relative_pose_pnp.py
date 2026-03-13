@@ -285,6 +285,13 @@ def estimate_relative_pose(
         T_cam2_board = rt_to_T(rvec_2, tvec_2)
         T_cam2_cam1 = T_cam2_board @ np.linalg.inv(T_cam1_board)
 
+        t_pair = T_cam2_cam1[:3, 3]
+        baseline_pair = float(np.linalg.norm(t_pair))
+        print(
+            f"{pair_name}: BASELINE SIZE: "
+            f"baseline={baseline_pair:.4f}"
+        )
+
         samples.append(PoseSample(pair_name=pair_name, T_cam2_cam1=T_cam2_cam1, reproj_cam1=err_1, reproj_cam2=err_2))
         print(f"{pair_name}: accepted, reproj_cam1={err_1:.3f}px reproj_cam2={err_2:.3f}px")
 
@@ -371,7 +378,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-dir", type=Path, required=False, help="Directory with synchronized images from both cameras.")
     parser.add_argument("--cam1-calib", type=Path, required=False, help="Calibration .npy for reference camera (cam1).")
     parser.add_argument("--cam2-calib", type=Path, required=False, help="Calibration .npy for target camera (cam2).")
-    parser.add_argument("--cam1-suffix", default="_left.png", help="Filename suffix for camera 1 images.")
+    parser.add_argument("--cam1-suffix", default="_zed.png", help="Filename suffix for camera 1 images.")
     parser.add_argument("--cam2-suffix", default="_realsense.png", help="Filename suffix for camera 2 images.")
     parser.add_argument(
         "--cam1-model",
