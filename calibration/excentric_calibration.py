@@ -144,7 +144,7 @@ if __name__ == '__main__':
 
     rgb_folder = dataset_dir / "depth" / "rgb"
 
-    calib_file = parent_dir / "calibration" / "realsense_calibration.yaml"
+    calib_file = parent_dir / "calibration" / "realsense_calibration_factory.yaml"
     calib = load_camera_calibration(calib_file)
 
     show_undistored(

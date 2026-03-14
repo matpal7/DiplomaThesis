@@ -26,12 +26,6 @@ class PoseSample:
     reproj_cam2: float
 
 
-# def _extract_first(calib: dict, keys: tuple[str, ...]):
-#     for key in keys:
-#         if key in calib:
-#             return calib[key]
-#     return None
-
 def load_yaml_calibration(yaml_path: Path) -> dict:
     fs = cv2.FileStorage(str(yaml_path), cv2.FILE_STORAGE_READ)
     if not fs.isOpened():
@@ -92,6 +86,21 @@ def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> lis
         pairs.append((cam1, cam2, key))
 
     return pairs
+
+def find_images(image_dir: Path, cam1_suffix: str) -> list[Path]:
+
+    def extract_key(p: Path) -> str:
+        return p.stem.split("_")[0]
+
+    def numeric_key(p: Path) -> int:
+        return int(extract_key(p))
+
+    cam1_images = sorted(
+        image_dir.glob(f"*{cam1_suffix}.png"),
+        key=numeric_key
+    )
+
+    return cam1_images
 
 def pose_from_charuco(
     image_path: Path,
@@ -425,10 +434,10 @@ if __name__ == "__main__":
     calib_dict_NICO_left = out_dir / "left_NICO.yaml"
     calib_dict_NICO_right = out_dir / "right_NICO.yaml"
     calib_dict_realsense = out_dir / "realsense_calibration.yaml"
-    calib_dict_zed = out_dir / "zed_left_calibration.yaml"
+    calib_dict_zed = out_dir / "zed_calibration.yaml"
 
     cam1_calib = calib_dict_NICO_left
-    cam2_calib = calib_dict_NICO_right
+    cam2_calib = calib_dict_realsense
 
     out_dir = out_dir / "relative_pose"
 
