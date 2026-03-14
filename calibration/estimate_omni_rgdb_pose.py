@@ -206,6 +206,36 @@ def average_transforms(transforms):
     return T
 
 
+def median_rotation_neighborhood(rotations):
+    """Return the rotation with the smallest median angular distance to all others."""
+    if len(rotations) == 1:
+        return rotations[0]
+
+    best_idx = 0
+    best_med = np.inf
+    for i, Ri in enumerate(rotations):
+        ang = [rotation_angle_deg(Ri, Rj) for Rj in rotations]
+        med = float(np.median(ang))
+        if med < best_med:
+            best_med = med
+            best_idx = i
+    return rotations[best_idx]
+
+
+def compute_median_reference(candidates):
+    Ts = [x["T"] for x in candidates]
+    translations = np.array([T[:3, 3] for T in Ts], dtype=np.float64)
+    rotations = [T[:3, :3] for T in Ts]
+
+    t_med = np.median(translations, axis=0)
+    R_med = median_rotation_neighborhood(rotations)
+
+    T_ref = np.eye(4, dtype=np.float64)
+    T_ref[:3, :3] = R_med
+    T_ref[:3, 3] = t_med
+    return T_ref
+
+
 def load_pairs(data_dir: Path, omni_suffix: str, rgbd_suffix: str):
     omni_files = sorted(data_dir.glob(f"*{omni_suffix}"))
     rgbd_files = sorted(data_dir.glob(f"*{rgbd_suffix}"))
@@ -224,17 +254,35 @@ def load_pairs(data_dir: Path, omni_suffix: str, rgbd_suffix: str):
 
 
 
-def select_inliers(candidates, T_ref, trans_thr_mm, rot_thr_deg):
+def _median_mad_threshold(values, sigma_mult=2.5, fallback=0.0):
+    values = np.asarray(values, dtype=np.float64)
+    if values.size == 0:
+        return float(fallback)
+
+    med = float(np.median(values))
+    mad = float(np.median(np.abs(values - med)))
+    robust_sigma = 1.4826 * mad
+    return med + sigma_mult * robust_sigma
+
+
+def select_inliers(candidates, T_ref, trans_thr_mm, rot_thr_deg, neighborhood_scale=1.0):
+    t_devs = [float(np.linalg.norm(x["T"][:3, 3] - T_ref[:3, 3])) for x in candidates]
+    r_devs = [float(rotation_angle_deg(T_ref[:3, :3], x["T"][:3, :3])) for x in candidates]
+
+    adaptive_trans_thr = _median_mad_threshold(t_devs, sigma_mult=2.0) * neighborhood_scale
+    adaptive_rot_thr = _median_mad_threshold(r_devs, sigma_mult=2.0) * neighborhood_scale
+
+    eff_trans_thr = min(trans_thr_mm, adaptive_trans_thr) if adaptive_trans_thr > 0 else trans_thr_mm
+    eff_rot_thr = min(rot_thr_deg, adaptive_rot_thr) if adaptive_rot_thr > 0 else rot_thr_deg
+
     inliers = []
-    for x in candidates:
-        t_dev = np.linalg.norm(x["T"][:3, 3] - T_ref[:3, 3])
-        r_dev = rotation_angle_deg(T_ref[:3, :3], x["T"][:3, :3])
-        if t_dev <= trans_thr_mm and r_dev <= rot_thr_deg:
+    for x, t_dev, r_dev in zip(candidates, t_devs, r_devs):
+        if t_dev <= eff_trans_thr and r_dev <= eff_rot_thr:
             y = dict(x)
             y["t_dev_mm"] = t_dev
             y["r_dev_deg"] = r_dev
             inliers.append(y)
-    return inliers
+    return inliers, eff_trans_thr, eff_rot_thr
 
 
 def inlier_failure_message(candidates, min_inliers, trans_thr, rot_thr):
@@ -361,44 +409,34 @@ def main():
     if len(candidates) < 3:
         raise RuntimeError(f"Only {len(candidates)} valid pairs found, need at least 3.")
 
-    Ts = [x["T"] for x in candidates]
-
-    # Choose reference candidate with minimum total disagreement to all others.
-    best_idx = 0
-    best_score = np.inf
-    for i, Ti in enumerate(Ts):
-        score = 0.0
-        for j, Tj in enumerate(Ts):
-            if i == j:
-                continue
-            score += np.linalg.norm(Ti[:3, 3] - Tj[:3, 3])
-            score += 20.0 * rotation_angle_deg(Ti[:3, :3], Tj[:3, :3])
-        if score < best_score:
-            best_score = score
-            best_idx = i
-
-    T_ref = Ts[best_idx]
+    T_ref = compute_median_reference(candidates)
 
     trans_thr = args.max_trans_dev_mm
     rot_thr = args.max_rot_dev_deg
-    inliers = select_inliers(candidates, T_ref, trans_thr, rot_thr)
+    neighborhood_scale = 1.0
+    inliers, eff_trans_thr, eff_rot_thr = select_inliers(
+        candidates, T_ref, trans_thr, rot_thr, neighborhood_scale=neighborhood_scale
+    )
 
     if len(inliers) < args.min_inliers and args.auto_relax:
         for _ in range(args.auto_relax_steps):
             trans_thr *= args.trans_relax_factor
             rot_thr *= args.rot_relax_factor
-            inliers = select_inliers(candidates, T_ref, trans_thr, rot_thr)
+            neighborhood_scale *= 1.15
+            inliers, eff_trans_thr, eff_rot_thr = select_inliers(
+                candidates, T_ref, trans_thr, rot_thr, neighborhood_scale=neighborhood_scale
+            )
             if len(inliers) >= args.min_inliers:
                 print(
-                    f"Auto-relax accepted: translation threshold={trans_thr:.1f} mm, "
-                    f"rotation threshold={rot_thr:.2f} deg, inliers={len(inliers)}"
+                    f"Auto-relax accepted: translation threshold={eff_trans_thr:.1f} mm, "
+                    f"rotation threshold={eff_rot_thr:.2f} deg, inliers={len(inliers)}"
                 )
                 break
 
     if len(inliers) < args.min_inliers:
         raise RuntimeError(
             f"Only {len(inliers)} inliers after robust filtering, need at least {args.min_inliers}. "
-            + inlier_failure_message(candidates, args.min_inliers, trans_thr, rot_thr)
+            + inlier_failure_message(candidates, args.min_inliers, eff_trans_thr, eff_rot_thr)
         )
 
     T_final = average_transforms([x["T"] for x in inliers])
@@ -411,6 +449,10 @@ def main():
         "num_pairs_total": len(pairs),
         "num_pairs_valid": len(candidates),
         "num_pairs_inliers": len(inliers),
+        "inlier_thresholds": {
+            "translation_mm": eff_trans_thr,
+            "rotation_deg": eff_rot_thr,
+        },
         "pairs": [
             {
                 "omni": x["pair"][0],
