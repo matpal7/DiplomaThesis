@@ -118,9 +118,7 @@ def main():
     parent_dir = Path(__file__).resolve().parent.parent.parent
     dataset_dir = parent_dir / "dataset_11032026"
     calib_imgs_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    out_dir = parent_dir / "NICO" / "out_2"
-
-    out_dir = parent_dir / "NICO" / "out_1103"
+    out_dir = parent_dir / "out" / "cameras_parameters"
     calib_dirc_left_path = out_dir / "calib_data.npy"
 
     calib_dict = load_dict(calib_dirc_left_path)

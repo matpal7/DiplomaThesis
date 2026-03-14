@@ -53,7 +53,7 @@ def save_zed_calibration(out_dir, filename="zed_left_calibration.yaml"):
     finally:
         zed.close()
 
-def save_realsense_calibration(out_dir, filename="realsense_calibration_2.yaml"):
+def save_realsense_calibration(out_dir, filename="realsense_calibration.yaml"):
 
     pipeline = rs.pipeline()
     config = rs.config()
@@ -86,5 +86,5 @@ if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parent.parent
     out_dir = parent_dir / "out" / "cameras_parameters"
 
-    save_zed_calibration(out_dir)
+    # save_zed_calibration(out_dir)
     save_realsense_calibration(out_dir)

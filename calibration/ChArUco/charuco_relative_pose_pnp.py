@@ -25,14 +25,12 @@ class PoseSample:
     reproj_cam1: float
     reproj_cam2: float
 
-def resize_to_frame(img, frame_size=(680, 480)):
-    return cv2.resize(img, frame_size, interpolation=cv2.INTER_AREA)
 
-def _extract_first(calib: dict, keys: tuple[str, ...]):
-    for key in keys:
-        if key in calib:
-            return calib[key]
-    return None
+# def _extract_first(calib: dict, keys: tuple[str, ...]):
+#     for key in keys:
+#         if key in calib:
+#             return calib[key]
+#     return None
 
 def load_yaml_calibration(yaml_path: Path) -> dict:
     fs = cv2.FileStorage(str(yaml_path), cv2.FILE_STORAGE_READ)
@@ -52,23 +50,11 @@ def load_yaml_calibration(yaml_path: Path) -> dict:
     }
 
 
-def load_camera_calibration(path: Path, model: str) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    suffix = path.suffix.lower()
-    if suffix in {".yaml", ".yml"}:
-        calib = load_yaml_calibration(path)
-    else:
-        calib = load_dict(str(path))
+def load_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    calib = load_yaml_calibration(path)
 
-    K = _extract_first(calib, ("K", "K_l"))
-    D = _extract_first(calib, ("dist", "D", "D_l"))
-
-    if K is None or D is None:
-        raise KeyError(
-            f"Calibration file {path} must contain intrinsics. Supported keys: "
-            "K/K_l/K_r and dist/D/D_l/D_r."
-        )
-
-
+    K = calib["K"]
+    D = calib["D"]
 
     K_arr = np.asarray(K, dtype=np.float64).reshape(3, 3)
     D_arr = np.asarray(D, dtype=np.float64).reshape(-1, 1)
@@ -78,21 +64,26 @@ def load_camera_calibration(path: Path, model: str) -> tuple[np.ndarray, np.ndar
 
 def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> list[tuple[Path, Path, str]]:
 
-    def numeric_key(p: Path):
-        name = p.name
-        num = name[:-len(cam1_suffix)]
-        return int(num)
+    def extract_key(p: Path) -> str:
+        return p.stem.split("_")[0]
 
-    cam1_images = sorted(image_dir.glob(f"*{cam1_suffix}"), key=numeric_key)
+    def numeric_key(p: Path) -> int:
+        return int(extract_key(p))
+
+    cam1_images = sorted(
+        image_dir.glob(f"*{cam1_suffix}.png"),
+        key=numeric_key
+    )
 
     cam2_map = {
-        p.name[:-len(cam2_suffix)]: p for p in image_dir.glob(f"*{cam2_suffix}")
+        extract_key(p): p
+        for p in image_dir.glob(f"*{cam2_suffix}.png")
     }
 
     pairs: list[tuple[Path, Path, str]] = []
 
     for cam1 in cam1_images:
-        key = cam1.name[:-len(cam1_suffix)]
+        key = extract_key(cam1)
         cam2 = cam2_map.get(key)
 
         if cam2 is None:
@@ -101,55 +92,6 @@ def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> lis
         pairs.append((cam1, cam2, key))
 
     return pairs
-
-
-def _xi_scalar(xi: np.ndarray) -> float:
-    return float(np.asarray(xi, dtype=np.float64).reshape(-1)[0])
-
-
-def undistort_omni_points_compat(corners_pix: np.ndarray, K: np.ndarray, D: np.ndarray, xi: np.ndarray) -> np.ndarray:
-    points = corners_pix.reshape(-1, 1, 2)
-    try:
-        return cv2.omnidir.undistortPoints(
-            distorted=points,
-            K=K,
-            D=D,
-            xi=np.asarray(xi, dtype=np.float64).reshape(1, 1),
-            R=np.eye(3, dtype=np.float64),
-        )
-    except cv2.error:
-        return cv2.omnidir.undistortPoints(
-            distorted=points,
-            K=K,
-            D=D,
-            xi=_xi_scalar(xi),
-            R=np.eye(3, dtype=np.float64),
-        )
-
-
-def project_omni_points_compat(
-    object_points: np.ndarray,
-    rvec: np.ndarray,
-    tvec: np.ndarray,
-    K: np.ndarray,
-    D: np.ndarray,
-    xi: np.ndarray,
-) -> np.ndarray:
-    obj = object_points.reshape(-1, 1, 3)
-    try:
-        projected, _ = cv2.omnidir.projectPoints(obj, rvec, tvec, K, _xi_scalar(xi), D)
-        return projected
-    except cv2.error:
-        projected, _ = cv2.omnidir.projectPoints(
-            obj,
-            rvec,
-            tvec,
-            K,
-            np.asarray(xi, dtype=np.float64).reshape(1, 1),
-            D,
-        )
-        return projected
-
 
 def pose_from_charuco(
     image_path: Path,
@@ -239,36 +181,92 @@ def rotation_angle_deg(R_a: np.ndarray, R_b: np.ndarray) -> float:
     trace = np.clip((np.trace(R_rel) - 1.0) * 0.5, -1.0, 1.0)
     return float(np.degrees(np.arccos(trace)))
 
+def _compute_pair_transform(rvec_1, tvec_1, rvec_2, tvec_2):
+    T_cam1_board = rt_to_T(rvec_1, tvec_1)
+    T_cam2_board = rt_to_T(rvec_2, tvec_2)
+    return T_cam2_board @ np.linalg.inv(T_cam1_board)
+
+def _camera_suffix_from_calib_path(calib_path: Path) -> str:
+    """
+    Example:
+        left_NICO.yaml  -> left
+        right.yaml      -> right
+        realsense.yaml  -> realsense
+    """
+    return calib_path.stem.split("_")[0].lower()
+
+
+def _get_undistort_function(camera_suffix: str, stereo_calib_dict):
+    """
+    Returns undistortion function for left/right stereo cameras.
+    For non-stereo cameras returns None.
+    """
+    undistort_l, undistort_r = get_undistort_functions(stereo_calib_dict, correct_horizon=False)
+
+    if camera_suffix == "left":
+        return undistort_l
+    if camera_suffix == "right":
+        return undistort_r
+    return None
+
 
 def estimate_relative_pose(
     image_dir: Path,
     cam1_calib: Path,
     cam2_calib: Path,
     output_path: Path,
-    cam1_suffix: str,
-    cam2_suffix: str,
-    cam1_model: str,
-    cam2_model: str,
+    calib_dirc_stereo: Path,
 ) -> None:
-    K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, cam2_model)
+    image_dir = Path(image_dir)
+    cam1_calib = Path(cam1_calib)
+    cam2_calib = Path(cam2_calib)
+    output_path = Path(output_path)
+    calib_dirc_stereo = Path(calib_dirc_stereo)
 
-    cam1_calib_dict = load_dict(cam1_calib)
-    K_cam1 = cam1_calib_dict["new_K_l"]
-    dist_cam1 = np.zeros((4, 1), dtype=np.float64)
+    # Load camera intrinsics
+    K_cam1, dist_cam1 = load_camera_calibration(cam1_calib)
+    K_cam2, dist_cam2 = load_camera_calibration(cam2_calib)
 
-    undistored_l, _ = get_undistort_functions(cam1_calib_dict, correct_horizon=False)
+    # Load stereo omnidir calibration only for left/right undistortion
+    stereo_calib_dict = load_dict(calib_dirc_stereo)
+
+    cam1_suffix = _camera_suffix_from_calib_path(cam1_calib)
+    cam2_suffix = _camera_suffix_from_calib_path(cam2_calib)
+
+    undistort_1 = _get_undistort_function(cam1_suffix, stereo_calib_dict)
+    undistort_2 = _get_undistort_function(cam2_suffix, stereo_calib_dict)
+
+    print(f"Camera 1: {cam1_suffix}")
+    print(f"Camera 2: {cam2_suffix}")
 
     _, board, detector = create_charuco_board()
     pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix)
 
     if not pairs:
-        raise RuntimeError(f"No matching pairs found in {image_dir} for suffixes {cam1_suffix} and {cam2_suffix}")
+        raise RuntimeError(
+            f"No matching pairs found in {image_dir} for suffixes {cam1_suffix} and {cam2_suffix}"
+        )
 
     samples: list[PoseSample] = []
 
     for cam1_path, cam2_path, pair_name in pairs:
-        rvec_1, tvec_1, err_1 = pose_from_charuco(cam1_path, board, detector, K_cam1, dist_cam1, undistored_function=undistored_l)
-        rvec_2, tvec_2, err_2 = pose_from_charuco(cam2_path, board, detector, K_cam2, dist_cam2)
+        rvec_1, tvec_1, err_1 = pose_from_charuco(
+            cam1_path,
+            board,
+            detector,
+            K_cam1,
+            dist_cam1,
+            undistored_function=undistort_1,
+        )
+
+        rvec_2, tvec_2, err_2 = pose_from_charuco(
+            cam2_path,
+            board,
+            detector,
+            K_cam2,
+            dist_cam2,
+            undistored_function=undistort_2,
+        )
 
         if rvec_1 is None or rvec_2 is None:
             print(f"{pair_name}: skipped (insufficient ChArUco corners in at least one image)")
@@ -276,30 +274,31 @@ def estimate_relative_pose(
 
         if err_1 > MAX_REPROJ_ERR or err_2 > MAX_REPROJ_ERR:
             print(
-                f"{pair_name}: rejected (reproj_cam1={err_1:.3f}px "
-                f"reproj_cam2={err_2:.3f}px)"
+                f"{pair_name}: rejected "
+                f"(reproj_cam1={err_1:.3f}px reproj_cam2={err_2:.3f}px)"
             )
             continue
 
-        T_cam1_board = rt_to_T(rvec_1, tvec_1)
-        T_cam2_board = rt_to_T(rvec_2, tvec_2)
-        T_cam2_cam1 = T_cam2_board @ np.linalg.inv(T_cam1_board)
+        T_cam2_cam1 = _compute_pair_transform(rvec_1, tvec_1, rvec_2, tvec_2)
 
-        t_pair = T_cam2_cam1[:3, 3]
-        baseline_pair = float(np.linalg.norm(t_pair))
-        print(
-            f"{pair_name}: BASELINE SIZE: "
-            f"baseline={baseline_pair:.4f}"
-        )
-
-        samples.append(PoseSample(pair_name=pair_name, T_cam2_cam1=T_cam2_cam1, reproj_cam1=err_1, reproj_cam2=err_2))
+        baseline_pair = float(np.linalg.norm(T_cam2_cam1[:3, 3]))
+        print(f"{pair_name}: baseline={baseline_pair:.4f}")
         print(f"{pair_name}: accepted, reproj_cam1={err_1:.3f}px reproj_cam2={err_2:.3f}px")
+
+        samples.append(
+            PoseSample(
+                pair_name=pair_name,
+                T_cam2_cam1=T_cam2_cam1,
+                reproj_cam1=err_1,
+                reproj_cam2=err_2,
+            )
+        )
 
     if not samples:
         raise RuntimeError("Could not estimate pose from any image pair.")
 
-    rotations = [s.T_cam2_cam1[:3, :3] for s in samples]
-    translations = np.array([s.T_cam2_cam1[:3, 3] for s in samples], dtype=np.float64)
+    rotations = [sample.T_cam2_cam1[:3, :3] for sample in samples]
+    translations = np.array([sample.T_cam2_cam1[:3, 3] for sample in samples], dtype=np.float64)
 
     R_avg = average_rotations(rotations)
     t_avg = np.mean(translations, axis=0)
@@ -307,91 +306,108 @@ def estimate_relative_pose(
     T_avg = np.eye(4, dtype=np.float64)
     T_avg[:3, :3] = R_avg
     T_avg[:3, 3] = t_avg
-    rvec_avg, tvec_avg = T_to_rt(T_avg)
+
     baseline = float(np.linalg.norm(t_avg))
-    print("BASELINE: ", baseline)
+    print("BASELINE:", baseline)
 
     rot_dev = [rotation_angle_deg(R, R_avg) for R in rotations]
     trans_dev = [float(np.linalg.norm(t - t_avg)) for t in translations]
 
-    output = {
-        "num_pairs_total": len(pairs),
-        "num_pairs_used": len(samples),
-        "T_cam2_cam1": T_avg,
-        "R_cam2_cam1": R_avg,
-        "t_cam2_cam1": t_avg,
-        "rvec_cam2_cam1": rvec_avg,
-        "tvec_cam2_cam1": tvec_avg,
-        "baseline": baseline,
-        "rotation_deviation_deg_mean": float(np.mean(rot_dev)),
-        "rotation_deviation_deg_std": float(np.std(rot_dev)),
-        "translation_deviation_mean": float(np.mean(trans_dev)),
-        "translation_deviation_std": float(np.std(trans_dev)),
-        "suffix_cam1": cam1_suffix,
-        "suffix_cam2": cam2_suffix,
-        "camera_model_cam1": cam1_model,
-        "camera_model_cam2": cam2_model,
-        "samples": [
-            {
-                "pair": s.pair_name,
-                "T_cam2_cam1": s.T_cam2_cam1,
-                "reproj_error_cam1_px": s.reproj_cam1,
-                "reproj_error_cam2_px": s.reproj_cam2,
-            }
-            for s in samples
-        ],
-    }
+    yaml_path = save_relative_pose_yaml(
+        out_dir=output_path,
+        cam1_suffix=cam1_suffix,
+        cam2_suffix=cam2_suffix,
+        K_cam1=K_cam1,
+        dist_cam1=dist_cam1,
+        K_cam2=K_cam2,
+        dist_cam2=dist_cam2,
+        T_cam2_cam1=T_avg,
+        R_cam2_cam1=R_avg,
+        t_cam2_cam1=t_avg,
+        baseline=baseline,
+        num_pairs_total=len(pairs),
+        num_pairs_used=len(samples),
+        rotation_deviation_deg_mean=float(np.mean(rot_dev)),
+        rotation_deviation_deg_std=float(np.std(rot_dev)),
+        translation_deviation_mean=float(np.mean(trans_dev)),
+        translation_deviation_std=float(np.std(trans_dev)),
+    )
 
-    # save_dict(output, str(output_path.parent), output_path.name)
+    print("Relative pose saved to:", yaml_path)
 
-    serializable = {
-        "num_pairs_total": output["num_pairs_total"],
-        "num_pairs_used": output["num_pairs_used"],
-        "T_cam2_cam1": np.asarray(output["T_cam2_cam1"]).tolist(),
-        "rvec_cam2_cam1": np.asarray(output["rvec_cam2_cam1"]).reshape(3).tolist(),
-        "tvec_cam2_cam1": np.asarray(output["tvec_cam2_cam1"]).reshape(3).tolist(),
-        "baseline": output["baseline"],
-        "rotation_deviation_deg_mean": output["rotation_deviation_deg_mean"],
-        "rotation_deviation_deg_std": output["rotation_deviation_deg_std"],
-        "translation_deviation_mean": output["translation_deviation_mean"],
-        "translation_deviation_std": output["translation_deviation_std"],
-        "suffix_cam1": output["suffix_cam1"],
-        "suffix_cam2": output["suffix_cam2"],
-        "camera_model_cam1": output["camera_model_cam1"],
-        "camera_model_cam2": output["camera_model_cam2"],
-    }
-    # json_path = output_path.with_suffix(".json")
-    # with open(json_path, "w", encoding="utf-8") as f:
-    #     json.dump(serializable, f, indent=2)
+def save_relative_pose_yaml(
+    out_dir: Path,
+    cam1_suffix: str,
+    cam2_suffix: str,
+    K_cam1: np.ndarray,
+    dist_cam1: np.ndarray,
+    K_cam2: np.ndarray,
+    dist_cam2: np.ndarray,
+    T_cam2_cam1: np.ndarray,
+    R_cam2_cam1: np.ndarray,
+    t_cam2_cam1: np.ndarray,
+    baseline: float,
+    num_pairs_total: int,
+    num_pairs_used: int,
+    rotation_deviation_deg_mean: float,
+    rotation_deviation_deg_std: float,
+    translation_deviation_mean: float,
+    translation_deviation_std: float,
+) -> Path:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("\n=== Relative pose (cam2 <- cam1) ===")
-    print(T_avg)
-    print("rvec_cam2_cam1:", rvec_avg.reshape(3))
-    print("tvec_cam2_cam1:", tvec_avg.reshape(3))
-    print(f"translation magnitude: {baseline:.6f}")
-    print(f"Saved: {output_path}")
-    # print(f"Saved: {json_path}")
+    safe_cam1 = cam1_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
+    safe_cam2 = cam2_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
 
+    filename = f"relative_pose_{safe_cam1}_to_{safe_cam2}.yaml"
+    out_path = out_dir / filename
+
+    fs = cv2.FileStorage(str(out_path), cv2.FILE_STORAGE_WRITE)
+    if not fs.isOpened():
+        raise RuntimeError(f"Could not open YAML file for writing: {out_path}")
+
+    try:
+        fs.write("suffix_cam1", cam1_suffix)
+        fs.write("suffix_cam2", cam2_suffix)
+
+        fs.write("K_cam1", K_cam1)
+        fs.write("D_cam1", dist_cam1)
+
+        fs.write("K_cam2", K_cam2)
+        fs.write("D_cam2", dist_cam2)
+
+        fs.write("T_cam2_cam1", T_cam2_cam1)
+        fs.write("R_cam2_cam1", R_cam2_cam1)
+        fs.write("t_cam2_cam1", t_cam2_cam1.reshape(3, 1))
+
+        T_cam1_cam2 = np.linalg.inv(T_cam2_cam1)
+        R_cam1_cam2 = T_cam1_cam2[:3, :3]
+        t_cam1_cam2 = T_cam1_cam2[:3, 3]
+
+        fs.write("T_cam1_cam2", T_cam1_cam2)
+        fs.write("R_cam1_cam2", R_cam1_cam2)
+        fs.write("t_cam1_cam2", t_cam1_cam2.reshape(3, 1))
+
+        fs.write("baseline", float(baseline))
+        fs.write("num_pairs_total", int(num_pairs_total))
+        fs.write("num_pairs_used", int(num_pairs_used))
+
+        fs.write("rotation_deviation_deg_mean", float(rotation_deviation_deg_mean))
+        fs.write("rotation_deviation_deg_std", float(rotation_deviation_deg_std))
+        fs.write("translation_deviation_mean", float(translation_deviation_mean))
+        fs.write("translation_deviation_std", float(translation_deviation_std))
+
+    finally:
+        fs.release()
+
+    return out_path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Estimate relative pose between two cameras from ChArUco image pairs.")
     parser.add_argument("--image-dir", type=Path, required=False, help="Directory with synchronized images from both cameras.")
     parser.add_argument("--cam1-calib", type=Path, required=False, help="Calibration .npy for reference camera (cam1).")
     parser.add_argument("--cam2-calib", type=Path, required=False, help="Calibration .npy for target camera (cam2).")
-    parser.add_argument("--cam1-suffix", default="_zed.png", help="Filename suffix for camera 1 images.")
-    parser.add_argument("--cam2-suffix", default="_realsense.png", help="Filename suffix for camera 2 images.")
-    parser.add_argument(
-        "--cam1-model",
-        choices=("pinhole", "omni"),
-        default="pinhole",
-        help="Camera model for camera 1. Use 'omni' for omnidirectional cameras with xi.",
-    )
-    parser.add_argument(
-        "--cam2-model",
-        choices=("pinhole", "omni"),
-        default="pinhole",
-        help="Camera model for camera 2. Use 'omni' for omnidirectional cameras with xi.",
-    )
     parser.add_argument("--output", type=Path, required=False, help="Output .npy path.")
     return parser.parse_args()
 
@@ -402,22 +418,28 @@ if __name__ == "__main__":
 
     dataset_dir = parent_dir / 'dataset_11032026'
     depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
-    out_dir = parent_dir / "NICO" / "out_1103"
-    calib_dirc_left_path =  out_dir / "calib_data.npy"
-    calib_dirc_realsense = out_dir / "realsense_calibration.yaml"
+    out_dir = parent_dir / "out" / "cameras_parameters"
 
+    calib_dict_stereo =  out_dir / "calib_data.npy"
+
+    calib_dict_NICO_left = out_dir / "left_NICO.yaml"
+    calib_dict_NICO_right = out_dir / "right_NICO.yaml"
+    calib_dict_realsense = out_dir / "realsense_calibration.yaml"
+    calib_dict_zed = out_dir / "zed_left_calibration.yaml"
+
+    cam1_calib = calib_dict_NICO_left
+    cam2_calib = calib_dict_NICO_right
+
+    out_dir = out_dir / "relative_pose"
 
     args.image_dir = depth_dir
-    args.cam1_calib = calib_dirc_left_path
-    args.cam2_calib = calib_dirc_realsense
+    args.cam1_calib = cam1_calib
+    args.cam2_calib = cam2_calib
     args.output = out_dir
     estimate_relative_pose(
         image_dir=args.image_dir,
         cam1_calib=args.cam1_calib,
         cam2_calib=args.cam2_calib,
         output_path=args.output,
-        cam1_suffix=args.cam1_suffix,
-        cam2_suffix=args.cam2_suffix,
-        cam1_model=args.cam1_model,
-        cam2_model=args.cam2_model,
+        calib_dirc_stereo=calib_dict_stereo
     )
