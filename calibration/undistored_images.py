@@ -3,7 +3,7 @@ from pathlib import Path
 
 import cv2
 
-from calibration.image import load_l_r_images_undistorted, load_realsense_rgb_images
+from calibration.image import load_l_r_images_undistorted, load_realsense_rgb_images, get_undistort_functions
 from utils import load_dict
 
 frameSize = (1280, 720)
@@ -60,6 +60,12 @@ def show_undistorted_images(calib_dict, img_dir, correct_horizon=False, scale=4,
             break
 
     cv2.destroyAllWindows()
+
+def undistorted_image_left(img, calib_dict):
+    calib_dict = load_dict(calib_dict)
+    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=False)
+    img = undistort_l(img)
+    return img
 
 
 if __name__ == '__main__':

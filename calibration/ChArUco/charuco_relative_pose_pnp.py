@@ -44,16 +44,36 @@ def load_yaml_calibration(yaml_path: Path) -> dict:
     }
 
 
-def load_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    calib = load_yaml_calibration(path)
+def load_camera_calibration(path: Path, suffix="left") -> tuple[np.ndarray, np.ndarray]:
+    path = Path(path)
 
-    K = calib["K"]
-    D = calib["D"]
+    if path.suffix.lower() in [".yaml", ".yml"]:
+        calib = load_yaml_calibration(path)
 
-    K_arr = np.asarray(K, dtype=np.float64).reshape(3, 3)
-    D_arr = np.asarray(D, dtype=np.float64).reshape(-1, 1)
+        K = calib["K"]
+        D = calib["D"]
 
-    return K_arr, D_arr
+        K_arr = np.asarray(K, dtype=np.float64).reshape(3, 3)
+        D_arr = np.asarray(D, dtype=np.float64).reshape(-1, 1)
+
+        return K_arr, D_arr
+
+
+    elif path.suffix.lower() == ".npy":
+        calib = load_dict(path)
+        if suffix == "left":
+            K = calib["new_K_l"]
+
+        else:
+            K = calib["new_K_r"]
+
+        K_arr = np.asarray(K, dtype=np.float64).reshape(3, 3)
+        D_arr = np.zeros((5, 1), dtype=np.float64)
+
+        return K_arr, D_arr
+
+    else:
+        raise ValueError(f"Unsupported calibration file format: {path}")
 
 
 def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> list[tuple[Path, Path, str]]:
@@ -263,7 +283,7 @@ def draw_charuco_correspondences(
 def show_debug_window(window_name: str, image: np.ndarray, debug: int) -> None:
     if debug <= 0:
         return
-
+    image = cv2.resize(image, (1280, 720))
     cv2.imshow(window_name, image)
     if debug >= 2:
         cv2.waitKey(0)
@@ -492,12 +512,16 @@ def _camera_suffix_from_calib_path(calib_path: Path) -> str:
     return calib_path.stem.split("_")[0].lower()
 
 
-def _get_undistort_function(camera_suffix: str, stereo_calib_dict):
+def _get_undistort_function(camera_suffix: str, path: Path):
     """
     Returns undistortion function for left/right stereo cameras.
     For non-stereo cameras returns None.
     """
-    undistort_l, undistort_r = get_undistort_functions(stereo_calib_dict, correct_horizon=False)
+    if path.suffix.lower() != ".npy":
+        return None
+
+    calib_dict = load_dict(path)
+    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=False)
 
     if camera_suffix == "left":
         return undistort_l
@@ -511,25 +535,20 @@ def estimate_relative_pose(
     cam1_calib: Path,
     cam2_calib: Path,
     output_path: Path,
-    calib_dirc_stereo: Path,
-    debug: int = 0,
+    cam1_suffix: str,
+    cam2_suffix: str,
+    debug: int = 2,
 ) -> None:
     image_dir = Path(image_dir)
     cam1_calib = Path(cam1_calib)
     cam2_calib = Path(cam2_calib)
     output_path = Path(output_path)
-    calib_dirc_stereo = Path(calib_dirc_stereo)
 
-    K_cam1, dist_cam1 = load_camera_calibration(cam1_calib)
-    K_cam2, dist_cam2 = load_camera_calibration(cam2_calib)
+    K_cam1, dist_cam1 = load_camera_calibration(cam1_calib, suffix=cam1_suffix)
+    K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)
 
-    stereo_calib_dict = load_dict(calib_dirc_stereo)
-
-    cam1_suffix = _camera_suffix_from_calib_path(cam1_calib)
-    cam2_suffix = _camera_suffix_from_calib_path(cam2_calib)
-
-    undistort_1 = _get_undistort_function(cam1_suffix, stereo_calib_dict)
-    undistort_2 = _get_undistort_function(cam2_suffix, stereo_calib_dict)
+    undistort_1 = _get_undistort_function(cam1_suffix, cam1_calib)
+    undistort_2 = _get_undistort_function(cam2_suffix, cam2_calib)
 
     print(f"Camera 1: {cam1_suffix}")
     print(f"Camera 2: {cam2_suffix}")
@@ -780,7 +799,7 @@ if __name__ == "__main__":
     calib_dict_zed = out_dir / "zed_calibration.yaml"
 
     cam1_calib = calib_dict_realsense
-    cam2_calib = calib_dict_zed
+    cam2_calib = calib_dict_stereo
 
     out_dir = out_dir / "relative_pose"
 
@@ -793,5 +812,7 @@ if __name__ == "__main__":
         cam1_calib=args.cam1_calib,
         cam2_calib=args.cam2_calib,
         output_path=args.output,
-        calib_dirc_stereo=calib_dict_stereo
+        cam1_suffix="realsense",
+        cam2_suffix="left",
+        debug=0
     )

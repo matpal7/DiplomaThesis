@@ -25,6 +25,7 @@ def _collect_calibration_points(
     chessboard_y=4,
     chessboard_dim=31.0,
     debug=0,
+    frame_size=(1280, 720)
 ):
     obj_coords = _build_object_points(chessboard_x, chessboard_y, chessboard_dim)
 
@@ -41,6 +42,8 @@ def _collect_calibration_points(
 
         if image_transform_fn is not None:
             img = image_transform_fn(img)
+            img = cv2.resize(img, frame_size)
+
             if img is None:
                 if debug > 0:
                     print("Transform returned None:", fname)
@@ -139,6 +142,7 @@ def calibrate_on_undistored(
     chessboard_dim=54.0,
     max_imgs=20,
     debug=0,
+    frame_size=(1280, 720)
 ):
     if camera_side not in ("left", "right"):
         raise ValueError("camera_side must be 'left' or 'right'")
@@ -161,6 +165,7 @@ def calibrate_on_undistored(
         chessboard_y=chessboard_y,
         chessboard_dim=chessboard_dim,
         debug=debug,
+        frame_size=frame_size,
     )
 
     calib = _run_calibration(obj_pts, img_pts, image_size, label=f"{camera_side} undistorted")
@@ -177,7 +182,8 @@ def calibrate_on_undistored(
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{camera_side}_NICO.yaml"
+    out_path = out_dir / f"{camera_side}_NICO_{frame_size[0]}x{frame_size[1]}.yaml"
+
 
     _save_calibration_yaml(
         out_path=out_path,
@@ -205,6 +211,7 @@ def calibrate(
     max_imgs=20,
     debug=0,
     file_suffix="calibration",
+    frame_size=(1280, 720)
 ):
     images = find_images(img_folder, suffix)[:max_imgs]
 
@@ -218,7 +225,7 @@ def calibrate(
         debug=debug,
     )
 
-    calib = _run_calibration(obj_pts, img_pts, image_size, label=suffix)
+    calib = _run_calibration(obj_pts, img_pts, image_size, label=suffix, frame_size=frame_size)
 
     rectified_calib_dict = {
         "camera": suffix,
@@ -231,7 +238,7 @@ def calibrate(
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{suffix}_{file_suffix}.yaml"
+    out_path = out_dir / f"{suffix}_{file_suffix}_{frame_size[0]}x{frame_size[1]}.yaml"
 
     _save_calibration_yaml(
         out_path=out_path,
@@ -258,12 +265,12 @@ if __name__ == '__main__':
     calib_dict = load_dict(out_dir / "calib_data.npy")
 
 
-    calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=54.0, max_imgs=40, chessboard_x=6,
-              chessboard_y=4, debug=debug)
-    calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=54.0, max_imgs=40, chessboard_x=6,
-                            chessboard_y=4, debug=debug)
+    # calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=54.0, max_imgs=40, chessboard_x=6,
+    #           chessboard_y=4, debug=debug)
+    # calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=54.0, max_imgs=40, chessboard_x=6,
+    #                         chessboard_y=4, debug=debug)
 
-    calibrate_on_undistored(relative_pose_dir, calib_dict, str(out_dir), camera_side="left", chessboard_dim=54.0,
-                            max_imgs=40, chessboard_x=6, chessboard_y=4, debug=debug)
+    # calibrate_on_undistored(relative_pose_dir, calib_dict, str(out_dir), camera_side="left", chessboard_dim=54.0,
+    #                         max_imgs=40, chessboard_x=6, chessboard_y=4, debug=debug)
     calibrate_on_undistored(relative_pose_dir, calib_dict, str(out_dir), camera_side="right", chessboard_dim=54.0,
-                            max_imgs=40, chessboard_x=6, chessboard_y=4, debug=debug)
+                            max_imgs=40, chessboard_x=6, chessboard_y=4, debug=debug, frame_size=(3840, 2160))
