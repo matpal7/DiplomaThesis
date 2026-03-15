@@ -108,27 +108,31 @@ def _pick_point_interactively(img: np.ndarray) -> tuple[int, int]:
     return selected["pt"]
 
 
-def _sample_depth(depth_map_path: Path, u: int, v: int) -> float:
+def _sample_depth(depth_map_path: Path, u: int, v: int, depth_scale: float = 0.001) -> float:
     depth = np.load(depth_map_path)
     if depth.ndim != 2:
         raise ValueError(f"Depth map must be a 2D array, got shape={depth.shape}.")
     if v < 0 or v >= depth.shape[0] or u < 0 or u >= depth.shape[1]:
         raise ValueError(f"Selected pixel {(u, v)} is out of bounds for depth map shape {depth.shape}.")
 
-    z = float(depth[v, u])
-    if not np.isfinite(z) or z <= 0:
-        raise ValueError(f"Invalid depth at pixel {(u, v)}: {z}")
+    z_raw = float(depth[v, u])
+    if not np.isfinite(z_raw) or z_raw <= 0:
+        raise ValueError(f"Invalid depth at pixel {(u, v)}: {z_raw}")
 
-    return z
+    z_m = z_raw * depth_scale
+    return z_m
 
 
-def _pixel_to_cam_point(u: int, v: int, depth_m: float, K: np.ndarray) -> np.ndarray:
-    fx, fy = K[0, 0], K[1, 1]
-    cx, cy = K[0, 2], K[1, 2]
+def _pixel_to_cam_point(u: int, v: int, depth_m: float, K: np.ndarray, D: np.ndarray) -> np.ndarray:
+    # Convert distorted pixel to normalized undistorted camera coordinates.
+    uv = np.array([[[float(u), float(v)]]], dtype=np.float64)
+    undist = cv2.undistortPoints(uv, K, D)
+    x_n, y_n = undist.reshape(2)
 
-    x = (u - cx) * depth_m / fx
-    y = (v - cy) * depth_m / fy
+    x = x_n * depth_m
+    y = y_n * depth_m
     return np.array([x, y, depth_m], dtype=np.float64)
+
 
 
 def _project_point(X_cam: np.ndarray, K: np.ndarray, D: np.ndarray) -> tuple[int, int]:
@@ -198,11 +202,11 @@ def _interactive_transfer_points(
 
         h, w = combined.shape[:2]
         target_w = 1800
-        if w > target_w:
-            scale = target_w / w
-            resized = cv2.resize(combined, (int(w * scale), int(h * scale)))
-        else:
-            resized = combined
+        # if w > target_w:
+        #     scale = target_w / w
+        #     resized = cv2.resize(combined, (int(w * scale), int(h * scale)))
+        # else:
+        resized = combined
 
         return resized, combined
 
@@ -228,14 +232,14 @@ def _interactive_transfer_points(
 
         try:
             if depth_map_path is not None:
-                depth_m = _sample_depth(depth_map_path, u, v)
+                depth_m = _sample_depth(depth_map_path, u, v, depth_scale=0.001)
             elif default_depth is not None:
                 depth_m = float(default_depth)
             else:
                 print("No depth source available.")
                 return
 
-            X1 = _pixel_to_cam_point(u, v, depth_m, K1)
+            X1 = _pixel_to_cam_point(u, v, depth_m, K1, D1)
             X1_h = np.append(X1, 1.0)
 
             X2_h = T_cam2_cam1 @ X1_h
@@ -331,7 +335,7 @@ def main() -> None:
     out_dir = parent_dir / "out" / "cameras_parameters"
 
     calib_dict_realsense = out_dir / "realsense_calibration.yaml"
-    calib_dict_zed = out_dir / "zed_left_calibration.yaml"
+    calib_dict_zed = out_dir / "zed_calibration.yaml"
 
     args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_zed.yaml"
     args.cam1_calib = calib_dict_realsense

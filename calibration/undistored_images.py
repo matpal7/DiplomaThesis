@@ -1,11 +1,12 @@
 import os
+from pathlib import Path
 
 import cv2
 
 from calibration.image import load_l_r_images_undistorted, load_realsense_rgb_images
 from utils import load_dict
 
-frameSize = (640, 480)
+frameSize = (1280, 720)
 
 
 def show_undistorted_images(calib_dict, img_dir, correct_horizon=False, scale=4, max_imgs=None):
@@ -62,9 +63,14 @@ def show_undistorted_images(calib_dict, img_dir, correct_horizon=False, scale=4,
 
 
 if __name__ == '__main__':
-    out_dir = '/NICO/out/'
-    calib_dir = load_dict(out_dir + "calib_data.npy")
-    dataset_dir = 'C:/Users/matej/Desktop/DiplomaThesis/dataset/'
-    calib_imgs_dir = dataset_dir + 'calibration/'
-    depth_imgs_dir = dataset_dir + 'depth/rgb/'
-    show_undistorted_images(calib_dir, calib_imgs_dir, scale=4, max_imgs=20)
+    parent_dir = Path(__file__).resolve().parent.parent
+
+    dataset_dir = parent_dir / "dataset_11032026"
+    calib_imgs_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
+
+    out_dir = parent_dir / "out" / "cameras_parameters"
+
+    calib_dict = load_dict(out_dir / "calib_data.npy")
+
+    out_dir = parent_dir / "out" / "cameras_parameters"
+    show_undistorted_images(calib_dict, calib_imgs_dir, scale=4, max_imgs=20)
