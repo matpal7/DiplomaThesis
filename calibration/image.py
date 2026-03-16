@@ -36,6 +36,9 @@ class Image():
     def get_path(self):
         return self.img_path
 
+    def get_resized_img(self, resolution):
+        return cv2.resize(self.img, resolution, interpolation=cv2.INTER_AREA)
+
 
     # def set_kp_and_des(self, kp, des):
     #     self.kp = kp

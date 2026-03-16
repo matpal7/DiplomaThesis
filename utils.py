@@ -1,5 +1,6 @@
 import glob
 import os
+from pathlib import Path
 
 import numpy as np
 import cv2
@@ -19,11 +20,17 @@ def save_dict(calib_dict, out_folder, file_name='calib_data.npy'):
     print("Wrote calib data to: ", npy_path)
 
 
+def _idx(p):
+    return int(Path(p).stem.split("_")[0])
+
 def get_l_r_image_fnames(img_folder, max_imgs=None):
     glob_string_l = '{}/*_left.png'.format(img_folder)
     glob_string_r = '{}/*_right.png'.format(img_folder)
-    images_l = sorted(glob.glob(glob_string_l))
-    images_r = sorted(glob.glob(glob_string_r))
+    images_l = glob.glob(glob_string_l)
+    images_r = glob.glob(glob_string_r)
+
+    images_l = sorted(images_l, key=_idx)
+    images_r = sorted(images_r, key=_idx)
 
     if max_imgs is not None:
         images_l = images_l[:max_imgs]
@@ -40,23 +47,23 @@ def get_depth_rgb_image_fnames(img_folder, max_imgs=None):
 
     return images_d
 
-# def get_l_r_image_fnames(calib_img_folder, max_imgs=None):
-#     # Get all PNG files in folder
-#     all_files = glob.glob(os.path.join(calib_img_folder, '*.png'))
-#
-#     # Filter only *_left.png and *_right.png, ignore *_realsense.png
-#     images_l = sorted([
-#         f for f in all_files
-#         if re.match(r'\d+_left\.png$', os.path.basename(f))
-#     ])
-#     images_r = sorted([
-#         f for f in all_files
-#         if re.match(r'\d+_right\.png$', os.path.basename(f))
-#     ])
-#
-#     # Limit number of images if requested
-#     if max_imgs is not None:
-#         images_l = images_l[:max_imgs]
-#         images_r = images_r[:max_imgs]
-#
-#     return images_l, images_r
+def scale_intrinsics(K: np.ndarray, old_size: tuple[int, int], new_size: tuple[int, int]) -> np.ndarray:
+    """
+    Scale camera intrinsics after resizing image.
+
+    old_size: (width, height)
+    new_size: (width, height)
+    """
+    old_w, old_h = old_size
+    new_w, new_h = new_size
+
+    sx = new_w / float(old_w)
+    sy = new_h / float(old_h)
+
+    K_new = K.copy().astype(np.float64)
+    K_new[0, 0] *= sx  # fx
+    K_new[1, 1] *= sy  # fy
+    K_new[0, 2] *= sx  # cx
+    K_new[1, 2] *= sy  # cy
+
+    return K_new
