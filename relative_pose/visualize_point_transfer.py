@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+from calibration.ChArUco.charuco_relative_pose_pnp import load_camera_calibration
+from calibration.undistored_images import undistorted_image_left
 
 
 def _read_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -152,7 +156,8 @@ def _interactive_transfer_points(
                 color2,
                 2,
             )
-
+        vis1 = cv2.resize(vis1, (1280, 720))
+        vis2 = cv2.resize(vis2, (1280, 720))
         return np.hstack([vis1, vis2])
 
     def mouse_cb(event, x, y, _flags, _param):
@@ -357,6 +362,111 @@ def _interactive_click_target_show_source(
 
     cv2.destroyWindow(window_name)
 
+def reproject_rgbd_to_target_view(
+    source_img: np.ndarray,
+    source_depth: np.ndarray,
+    K_source: np.ndarray,
+    D_source: np.ndarray,
+    K_target: np.ndarray,
+    D_target: np.ndarray,
+    T_target_source: np.ndarray,
+    target_shape_hw: tuple[int, int],
+    depth_scale: float = 0.001,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Reproject RGBD source image into target camera view.
+
+    Returns:
+        warped_rgb      : RGB image in target view
+        warped_depth    : Z-depth in target camera frame
+        valid_mask      : valid projected pixels
+    """
+    target_h, target_w = target_shape_hw
+    src_h, src_w = source_depth.shape[:2]
+
+    warped_rgb = np.zeros((target_h, target_w, 3), dtype=source_img.dtype)
+    warped_depth = np.full((target_h, target_w), np.inf, dtype=np.float64)
+    valid_mask = np.zeros((target_h, target_w), dtype=np.uint8)
+
+    ys, xs = np.where(np.isfinite(source_depth) & (source_depth > 0))
+
+    for v_s, u_s in zip(ys.tolist(), xs.tolist()):
+        z_raw = float(source_depth[v_s, u_s])
+        z_m = z_raw * depth_scale
+
+        # 3D point in source camera
+        X_s = _pixel_to_cam_point(u_s, v_s, z_m, K_source, D_source)
+
+        # Transform to target camera
+        X_t = (T_target_source @ np.append(X_s, 1.0))[:3]
+
+        if X_t[2] <= 0:
+            continue
+
+        # Project to target image
+        u_t, v_t = _project_point(X_t, K_target, D_target)
+
+        if u_t < 0 or u_t >= target_w or v_t < 0 or v_t >= target_h:
+            continue
+
+        # Z-buffer: keep nearest point
+        if X_t[2] < warped_depth[v_t, u_t]:
+            warped_depth[v_t, u_t] = X_t[2]
+            warped_rgb[v_t, u_t] = source_img[v_s, u_s]
+            valid_mask[v_t, u_t] = 255
+
+    warped_depth[~np.isfinite(warped_depth)] = 0.0
+    return warped_rgb, warped_depth, valid_mask
+
+
+def visualize_reprojected_result(
+    source_img: np.ndarray,
+    target_img: np.ndarray,
+    warped_rgb: np.ndarray,
+    valid_mask: np.ndarray,
+    alpha: float = 0.6,
+    tile_size: tuple[int, int] = (640, 360),
+) -> np.ndarray:
+    """
+    Create 2x2 visualization:
+
+    top-left     : source image
+    top-right    : target image
+    bottom-left  : warped RGB
+    bottom-right : blended overlay
+    """
+    mask_bool = valid_mask > 0
+
+    blended = target_img.copy()
+    blended[mask_bool] = (
+        alpha * warped_rgb[mask_bool].astype(np.float32)
+        + (1.0 - alpha) * target_img[mask_bool].astype(np.float32)
+    ).astype(np.uint8)
+
+    def make_tile(img: np.ndarray, title: str) -> np.ndarray:
+        tile = cv2.resize(img, tile_size)
+        cv2.putText(
+            tile,
+            title,
+            (15, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return tile
+
+    top_left = make_tile(source_img, "Source RGBD")
+    top_right = make_tile(target_img, "Target Stereo")
+    bottom_left = make_tile(warped_rgb, "Warped RGBD -> Stereo")
+    bottom_right = make_tile(blended, "Overlay")
+
+    top_row = cv2.hconcat([top_left, top_right])
+    bottom_row = cv2.hconcat([bottom_left, bottom_right])
+
+    grid = cv2.vconcat([top_row, bottom_row])
+    return grid
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -366,11 +476,11 @@ def parse_args() -> argparse.Namespace:
             "Use mode B for inverse query via cam1 depth only (click cam2)."
         )
     )
-    parser.add_argument("--image-cam1", type=Path, required=True, help="Image from source camera (cam1)")
-    parser.add_argument("--image-cam2", type=Path, required=True, help="Image from target camera (cam2)")
-    parser.add_argument("--cam1-calib", type=Path, required=True, help="YAML intrinsics for source camera (K,D)")
-    parser.add_argument("--cam2-calib", type=Path, required=True, help="YAML intrinsics for target camera (K,D)")
-    parser.add_argument("--relative-pose", type=Path, required=True, help="Relative pose file (.json/.yaml)")
+    parser.add_argument("--image-cam1", type=Path, required=False, help="Image from source camera (cam1)")
+    parser.add_argument("--image-cam2", type=Path, required=False, help="Image from target camera (cam2)")
+    parser.add_argument("--cam1-calib", type=Path, required=False, help="YAML intrinsics for source camera (K,D)")
+    parser.add_argument("--cam2-calib", type=Path, required=False, help="YAML intrinsics for target camera (K,D)")
+    parser.add_argument("--relative-pose", type=Path, required=False, help="Relative pose file (.json/.yaml)")
 
     parser.add_argument(
         "--mode",
@@ -405,15 +515,42 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    parent_dir = Path(__file__).resolve().parent.parent
+
+    dataset_dir = parent_dir / "dataset_11032026"
+    depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
+
+    args.image_cam1 = depth_dir / "1_realsense.png"
+    args.image_cam2 = depth_dir / "1_left.png"
+
+    out_dir = parent_dir / "out" / "cameras_parameters"
+
+    calib_dict_realsense = out_dir / "realsense_calibration.yaml"
+    calib_dict_zed = out_dir / "zed_calibration.yaml"
+    calib_dict_NICO_left = out_dir / "left_NICO.yaml"
+    calib_dict_stereo = out_dir / "calib_data.npy"
+
+
+    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left.yaml"
+    args.cam1_calib = calib_dict_realsense
+    args.cam2_calib = calib_dict_stereo
+    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "0_realsense_depth.npy"
+
     img1 = cv2.imread(str(args.image_cam1))
     img2 = cv2.imread(str(args.image_cam2))
+
+    img2 = undistorted_image_left(img2, calib_dict_stereo)
+
+    # img1 = cv2.resize(img1, (1280, 720))
+    # img2 = cv2.resize(img2, (1280, 720))
+
     if img1 is None:
         raise FileNotFoundError(f"Cannot read camera 1 image: {args.image_cam1}")
     if img2 is None:
         raise FileNotFoundError(f"Cannot read camera 2 image: {args.image_cam2}")
 
-    K1, D1 = _read_camera_calibration(args.cam1_calib)
-    K2, D2 = _read_camera_calibration(args.cam2_calib)
+    K1, D1 = load_camera_calibration(args.cam1_calib)
+    K2, D2 = load_camera_calibration(args.cam2_calib, suffix="left")
     T_cam2_cam1 = _read_relative_pose(args.relative_pose)
     if args.invert_relative_pose:
         T_cam2_cam1 = np.linalg.inv(T_cam2_cam1)
@@ -454,7 +591,28 @@ def main() -> None:
         raise ValueError("Mode cam2_to_cam1_via_cam1_depth requires --depth-map-cam1")
 
     depth_cam1 = np.load(args.depth_map_cam1)
-    lut_u, lut_v, _zbuf = _build_target_to_source_lookup(
+    # lut_u, lut_v, _zbuf = _build_target_to_source_lookup(
+    #     source_depth=depth_cam1,
+    #     K_source=K1,
+    #     D_source=D1,
+    #     K_target=K2,
+    #     D_target=D2,
+    #     T_target_source=T_cam2_cam1,
+    #     target_shape_hw=(img2.shape[0], img2.shape[1]),
+    #     depth_scale=args.depth_scale,
+    # )
+    #
+    # _interactive_click_target_show_source(
+    #     source_img=img1,
+    #     target_img=img2,
+    #     lut_u=lut_u,
+    #     lut_v=lut_v,
+    #     circle_radius=args.circle_radius,
+    #     save_path=args.save,
+    # )
+
+    warped_rgb, warped_depth, valid_mask = reproject_rgbd_to_target_view(
+        source_img=img1,
         source_depth=depth_cam1,
         K_source=K1,
         D_source=D1,
@@ -465,14 +623,19 @@ def main() -> None:
         depth_scale=args.depth_scale,
     )
 
-    _interactive_click_target_show_source(
+    vis = visualize_reprojected_result(
         source_img=img1,
         target_img=img2,
-        lut_u=lut_u,
-        lut_v=lut_v,
-        circle_radius=args.circle_radius,
-        save_path=args.save,
+        warped_rgb=warped_rgb,
+        valid_mask=valid_mask,
+        alpha=0.7,
     )
+
+
+    cv2.namedWindow("RGBD -> Stereo reprojection", cv2.WINDOW_NORMAL)
+    cv2.imshow("RGBD -> Stereo reprojection", vis)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
