@@ -1,62 +1,33 @@
-# RGBD → 3D → ľavá referenčná kamera (aj bez hĺbky v ľavej kamere)
+# Point transfer between calibrated cameras (single + multi-target)
 
-Skript `relative_pose/visualize_point_transfer.py` má dva režimy:
+Script: `relative_pose/visualize_point_transfer.py`
 
-- **Mode A (`cam1_to_cam2`)**: klikáš v `cam1` (napr. RealSense) a bod sa premietne do `cam2` (ľavá stereo).
-- **Mode B (`cam2_to_cam1_via_cam1_depth`)**: klikáš v `cam2` (ľavá stereo) a skript nájde zodpovedajúci pixel v `cam1` (RealSense),
-  **aj keď ľavá kamera nemá depth**. Lookup sa vyráta iba z RealSense hĺbky.
+## What it can do
 
-To rieši presne situáciu: máš depth iba z Intel RealSense a chceš zarovnať XY súradnice voči ľavej stereo.
+- **Mode `cam1_to_cam2`**: click in source camera (`cam1`) and project point into target camera (`cam2`) using source depth.
+- **Mode `cam2_to_cam1_via_cam1_depth`**: click in target (`cam2`) and back-query source (`cam1`) pixel using lookup from `cam1` depth.
+- **Mode `multi_target_from_cam1`**: click once in `cam1` and simultaneously draw the projected point in **multiple target cameras** (e.g. RealSense + ZCam), when you have relative poses from `cam1` to each target.
 
-## Matematika pipeline
-
-1. Vezmeme pixel z RealSense `(u_rs, v_rs)` + `Z_rs` z depth mapy.
-2. Back-projection do 3D v RealSense kamere: `X_rs`.
-3. Transformácia do ľavej kamery: `X_left = T_left_rs * X_rs`.
-4. Projekcia do ľavého obrazu: `(u_left, v_left)`.
-
-Pri režime B sa tento krok spraví pre veľa RealSense pixelov a vyrobí sa lookup `left_pixel -> realsense_pixel`.
-
-## A) RealSense -> Left (klikám v RealSense)
+## Example: click in left RGBD and project to RealSense + ZCam
 
 ```bash
 python relative_pose/visualize_point_transfer.py \
-  --mode cam1_to_cam2 \
-  --image-cam1 dataset_11032026/stereo_4k_relative_pose/rgb/0_realsense.png \
-  --image-cam2 dataset_11032026/stereo_4k_relative_pose/rgb/0_left.png \
-  --cam1-calib out/cameras_parameters/realsense_calibration.yaml \
-  --cam2-calib out/cameras_parameters/left_NICO.yaml \
-  --relative-pose out/cameras_parameters/relative_pose/relative_pose_realsense_to_left.yaml \
-  --depth-map-cam1 dataset_11032026/stereo_4k_relative_pose/depth/0_realsense_depth.npy \
-  --source-name realsense --target-name left
+  --mode multi_target_from_cam1 \
+  --image-cam1 dataset/.../0_left.png \
+  --cam1-calib out/cameras_parameters/left_calibration.yaml \
+  --depth-map-cam1 dataset/.../0_left_depth.npy \
+  --target-images dataset/.../0_realsense.png dataset/.../0_zcam.png \
+  --target-calibs out/cameras_parameters/realsense_calibration.yaml out/cameras_parameters/zcam_calibration.yaml \
+  --target-relative-poses out/cameras_parameters/relative_pose/relative_pose_left_to_realsense.yaml out/cameras_parameters/relative_pose/relative_pose_left_to_zcam.yaml \
+  --target-names realsense zcam \
+  --depth-scale 0.001
 ```
 
-## B) Left -> RealSense bez left depth (klikám v ľavej kamere)
+> If your pose files store opposite direction, add `--invert-relative-pose`.
 
-```bash
-python relative_pose/visualize_point_transfer.py \
-  --mode cam2_to_cam1_via_cam1_depth \
-  --image-cam1 dataset_11032026/stereo_4k_relative_pose/rgb/0_realsense.png \
-  --image-cam2 dataset_11032026/stereo_4k_relative_pose/rgb/0_left.png \
-  --cam1-calib out/cameras_parameters/realsense_calibration.yaml \
-  --cam2-calib out/cameras_parameters/left_NICO.yaml \
-  --relative-pose out/cameras_parameters/relative_pose/relative_pose_realsense_to_left.yaml \
-  --depth-map-cam1 dataset_11032026/stereo_4k_relative_pose/depth/0_realsense_depth.npy \
-  --source-name realsense --target-name left
-```
+## Controls
 
-V tomto režime klikáš do ľavého obrazu a vpravo sa zobrazí zodpovedajúci bod v RealSense RGB.
-
-> Ak je transformácia uložená opačne, pridaj `--invert-relative-pose`.
-
-## Poznámka k obmedzeniam
-
-Bez hĺbky v ľavej kamere vieš mapovať len body/scény, ktoré vidí RealSense depth.
-Ak je pixel vľavo mimo pokrytia RealSense (alebo v oklúzii), lookup preň nebude existovať.
-
-## Ovládanie
-
-- **ľavý klik**: pridá korešpondenciu bodu
-- **c**: vymaže body
-- **s**: uloží vizualizáciu
-- **q / ESC**: koniec
+- **Left click**: add point transfer
+- **c**: clear points
+- **s**: save current view (if `--save` is provided)
+- **q / ESC**: quit
