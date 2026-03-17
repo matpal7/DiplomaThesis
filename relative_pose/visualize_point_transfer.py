@@ -7,7 +7,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-
 def _read_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray]:
     fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
     if not fs.isOpened():
@@ -152,7 +151,8 @@ def _interactive_transfer_points(
                 color2,
                 2,
             )
-
+        vis1 = cv2.resize(vis1, (1280, 720))
+        vis2 = cv2.resize(vis2, (1280, 720))
         return np.hstack([vis1, vis2])
 
     def mouse_cb(event, x, y, _flags, _param):
@@ -357,47 +357,249 @@ def _interactive_click_target_show_source(
 
     cv2.destroyWindow(window_name)
 
+def reproject_rgbd_to_target_view(
+    source_img: np.ndarray,
+    source_depth: np.ndarray,
+    K_source: np.ndarray,
+    D_source: np.ndarray,
+    K_target: np.ndarray,
+    D_target: np.ndarray,
+    T_target_source: np.ndarray,
+    target_shape_hw: tuple[int, int],
+    depth_scale: float = 0.001,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Reproject RGBD source image into target camera view.
+
+    Returns:
+        warped_rgb      : RGB image in target view
+        warped_depth    : Z-depth in target camera frame
+        valid_mask      : valid projected pixels
+    """
+    target_h, target_w = target_shape_hw
+    src_h, src_w = source_depth.shape[:2]
+
+    warped_rgb = np.zeros((target_h, target_w, 3), dtype=source_img.dtype)
+    warped_depth = np.full((target_h, target_w), np.inf, dtype=np.float64)
+    valid_mask = np.zeros((target_h, target_w), dtype=np.uint8)
+
+    ys, xs = np.where(np.isfinite(source_depth) & (source_depth > 0))
+
+    for v_s, u_s in zip(ys.tolist(), xs.tolist()):
+        z_raw = float(source_depth[v_s, u_s])
+        z_m = z_raw * depth_scale
+
+        # 3D point in source camera
+        X_s = _pixel_to_cam_point(u_s, v_s, z_m, K_source, D_source)
+
+        # Transform to target camera
+        X_t = (T_target_source @ np.append(X_s, 1.0))[:3]
+
+        if X_t[2] <= 0:
+            continue
+
+        # Project to target image
+        u_t, v_t = _project_point(X_t, K_target, D_target)
+
+        if u_t < 0 or u_t >= target_w or v_t < 0 or v_t >= target_h:
+            continue
+
+        # Z-buffer: keep nearest point
+        if X_t[2] < warped_depth[v_t, u_t]:
+            warped_depth[v_t, u_t] = X_t[2]
+            warped_rgb[v_t, u_t] = source_img[v_s, u_s]
+            valid_mask[v_t, u_t] = 255
+
+    warped_depth[~np.isfinite(warped_depth)] = 0.0
+    return warped_rgb, warped_depth, valid_mask
+
+
+def visualize_reprojected_result(
+    source_img: np.ndarray,
+    target_img: np.ndarray,
+    warped_rgb: np.ndarray,
+    valid_mask: np.ndarray,
+    alpha: float = 0.6,
+    tile_size: tuple[int, int] = (640, 360),
+) -> np.ndarray:
+    """
+    Create 2x2 visualization:
+
+    top-left     : source image
+    top-right    : target image
+    bottom-left  : warped RGB
+    bottom-right : blended overlay
+    """
+    mask_bool = valid_mask > 0
+
+    blended = target_img.copy()
+    blended[mask_bool] = (
+        alpha * warped_rgb[mask_bool].astype(np.float32)
+        + (1.0 - alpha) * target_img[mask_bool].astype(np.float32)
+    ).astype(np.uint8)
+
+    def make_tile(img: np.ndarray, title: str) -> np.ndarray:
+        tile = cv2.resize(img, tile_size)
+        cv2.putText(
+            tile,
+            title,
+            (15, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return tile
+
+    top_left = make_tile(source_img, "Source RGBD")
+    top_right = make_tile(target_img, "Target Stereo")
+    bottom_left = make_tile(warped_rgb, "Warped RGBD -> Stereo")
+    bottom_right = make_tile(blended, "Overlay")
+
+    top_row = cv2.hconcat([top_left, top_right])
+    bottom_row = cv2.hconcat([bottom_left, bottom_right])
+
+    grid = cv2.vconcat([top_row, bottom_row])
+    return grid
+
+def _interactive_transfer_points_multi_targets(
+    source_img: np.ndarray,
+    source_depth: np.ndarray,
+    K_source: np.ndarray,
+    D_source: np.ndarray,
+    targets: list[dict],
+    depth_scale: float = 0.001,
+    circle_radius: int = 12,
+    save_path: Path | None = None,
+) -> None:
+    """Click in source image and project to all target images."""
+    points = []  # ((u,v), depth_m, [(name,(u_t,v_t))])
+
+    target_views = [t["image"].copy() for t in targets]
+
+    def redraw() -> np.ndarray:
+        src_vis = source_img.copy()
+        panels = [src_vis]
+
+        for idx, ((u, v), depth_m, target_hits) in enumerate(points):
+            cv2.circle(src_vis, (u, v), circle_radius, (0, 255, 255), 2)
+            cv2.putText(
+                src_vis,
+                f"{idx}: ({u},{v}) z={depth_m:.3f}m",
+                (max(10, u + 10), max(25, v - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 255, 255),
+                2,
+            )
+
+            for target_idx, (_name, (u_t, v_t)) in enumerate(target_hits):
+                vis_t = target_views[target_idx]
+                cv2.circle(vis_t, (u_t, v_t), circle_radius, (255, 0, 255), 2)
+                cv2.putText(
+                    vis_t,
+                    f"{idx}: ({u_t},{v_t})",
+                    (max(10, u_t + 10), max(25, v_t - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (255, 0, 255),
+                    2,
+                )
+
+        cv2.putText(src_vis, 'SOURCE', (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+        for i, target in enumerate(targets):
+            vis = target_views[i]
+            cv2.putText(vis, target['name'], (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+            panels.append(vis)
+
+        resized = [cv2.resize(panel, (960, 540)) for panel in panels]
+        return np.hstack(resized)
+
+    def mouse_cb(event, x, y, _flags, _param):
+        if event != cv2.EVENT_LBUTTONDOWN:
+            return
+
+        u, v = int(x), int(y)
+        if u < 0 or v < 0 or u >= source_img.shape[1] or v >= source_img.shape[0]:
+            return
+
+        try:
+            depth_m = _sample_depth(source_depth, u, v, depth_scale=depth_scale)
+            X_s = _pixel_to_cam_point(u, v, depth_m, K_source, D_source)
+
+            target_hits = []
+            for target in targets:
+                X_t = (target['T_target_source'] @ np.append(X_s, 1.0))[:3]
+                if X_t[2] <= 0:
+                    raise ValueError(f"Point behind camera {target['name']} (z={X_t[2]:.4f}).")
+
+                u_t, v_t = _project_point(X_t, target['K'], target['D'])
+                if u_t < 0 or v_t < 0 or u_t >= target['image'].shape[1] or v_t >= target['image'].shape[0]:
+                    raise ValueError(f"Projected pixel out of bounds in {target['name']}: ({u_t}, {v_t})")
+
+                target_hits.append((target['name'], (u_t, v_t)))
+
+            points.append(((u, v), depth_m, target_hits))
+            print(f"Source pixel ({u},{v}) depth={depth_m:.4f}m")
+            for target_name, (u_t, v_t) in target_hits:
+                print(f"  -> {target_name}: ({u_t}, {v_t})")
+        except Exception as e:
+            print(f"Click ignored: {e}")
+
+    window_name = 'Multi-target transfer: click SOURCE -> all targets'
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 2200, 900)
+    cv2.setMouseCallback(window_name, mouse_cb)
+
+    print('Interactive multi-target mode')
+    print('  Left mouse click in SOURCE image: transfer to all target cameras')
+    print('  c: clear all points')
+    print('  s: save current visualization')
+    print('  q or ESC: quit')
+
+    while True:
+        target_views[:] = [t['image'].copy() for t in targets]
+        full = redraw()
+        cv2.imshow(window_name, full)
+        key = cv2.waitKey(20) & 0xFF
+
+        if key in (27, ord('q')):
+            break
+        if key == ord('c'):
+            points.clear()
+            print('All points cleared.')
+        if key == ord('s') and save_path is not None:
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(save_path), full)
+            print(f'Saved visualization to: {save_path}')
+
+    cv2.destroyWindow(window_name)
+
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Point transfer between two calibrated cameras. "
-            "Use mode A for cam1->cam2 transfer (click cam1). "
-            "Use mode B for inverse query via cam1 depth only (click cam2)."
-        )
-    )
-    parser.add_argument("--image-cam1", type=Path, required=True, help="Image from source camera (cam1)")
-    parser.add_argument("--image-cam2", type=Path, required=True, help="Image from target camera (cam2)")
-    parser.add_argument("--cam1-calib", type=Path, required=True, help="YAML intrinsics for source camera (K,D)")
-    parser.add_argument("--cam2-calib", type=Path, required=True, help="YAML intrinsics for target camera (K,D)")
-    parser.add_argument("--relative-pose", type=Path, required=True, help="Relative pose file (.json/.yaml)")
+    parser = argparse.ArgumentParser(description='Interactive point transfer between calibrated cameras.')
+    parser.add_argument('--mode', choices=['cam1_to_cam2', 'cam2_to_cam1_via_cam1_depth', 'multi_target_from_cam1'], default='cam1_to_cam2')
 
-    parser.add_argument(
-        "--mode",
-        choices=["cam1_to_cam2", "cam2_to_cam1_via_cam1_depth"],
-        default="cam1_to_cam2",
-        help=(
-            "cam1_to_cam2: click in cam1 (needs cam1 depth). "
-            "cam2_to_cam1_via_cam1_depth: click in cam2 and recover cam1 pixel using lookup built from cam1 depth."
-        ),
-    )
+    parser.add_argument('--image-cam1', type=Path, required=True, help='Image from source camera (cam1)')
+    parser.add_argument('--image-cam2', type=Path, required=False, help='Image from target camera (cam2)')
+    parser.add_argument('--cam1-calib', type=Path, required=True, help='YAML intrinsics for source camera (K,D)')
+    parser.add_argument('--cam2-calib', type=Path, required=False, help='YAML intrinsics for target camera (K,D)')
+    parser.add_argument('--relative-pose', type=Path, required=False, help='Relative pose file (.json/.yaml) with T_cam2_cam1')
 
-    parser.add_argument("--depth-map-cam1", type=Path, default=None, help=".npy depth map for camera 1")
-    parser.add_argument("--depth-scale", type=float, default=0.001, help="Depth scale to convert raw depth to meters")
-    parser.add_argument("--depth", type=float, default=None, help="Fallback constant depth in meters")
+    parser.add_argument('--target-images', nargs='*', type=Path, default=None, help='Multiple target images for multi_target_from_cam1 mode')
+    parser.add_argument('--target-calibs', nargs='*', type=Path, default=None, help='Multiple target intrinsics files')
+    parser.add_argument('--target-relative-poses', nargs='*', type=Path, default=None, help='Relative poses (T_target_cam1) for each target')
+    parser.add_argument('--target-names', nargs='*', default=None, help='Display names for targets')
 
-    parser.add_argument("--circle-radius", type=int, default=12, help="Circle radius in pixels")
-    parser.add_argument("--save", type=Path, default=None, help="Optional output visualization path")
-    parser.add_argument(
-        "--invert-relative-pose",
-        action="store_true",
-        help=(
-            "Invert loaded transform before use. Useful when your file contains "
-            "T_cam1_cam2 but you need T_cam2_cam1."
-        ),
-    )
-    parser.add_argument("--source-name", default="cam1", help="Display name for source camera")
-    parser.add_argument("--target-name", default="cam2", help="Display name for target camera")
+    parser.add_argument('--depth-map-cam1', type=Path, default=None, help='.npy depth map for camera 1')
+    parser.add_argument('--depth-scale', type=float, default=0.001)
+    parser.add_argument('--depth', type=float, default=None, help='Fallback constant depth (cam1_to_cam2 only)')
+    parser.add_argument('--circle-radius', type=int, default=12)
+    parser.add_argument('--save', type=Path, default=None)
+    parser.add_argument('--invert-relative-pose', action='store_true')
+    parser.add_argument('--source-name', default='cam1')
+    parser.add_argument('--target-name', default='cam2')
 
     return parser.parse_args()
 
@@ -405,35 +607,84 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    parent_dir = Path(__file__).resolve().parent.parent
+
+    dataset_dir = parent_dir / "dataset_11032026"
+    depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
+
+    args.image_cam1 = depth_dir / "1_realsense.png"
+    args.image_cam2 = depth_dir / "1_left.png"
+
+    out_dir = parent_dir / "out" / "cameras_parameters"
+
+    calib_dict_realsense = out_dir / "realsense_calibration.yaml"
+    calib_dict_zed = out_dir / "zed_calibration.yaml"
+    calib_dict_NICO_left = out_dir / "left_NICO.yaml"
+    calib_dict_stereo = out_dir / "calib_data.npy"
+
+
+    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left.yaml"
+    args.cam1_calib = calib_dict_realsense
+    args.cam2_calib = calib_dict_stereo
+    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "0_realsense_depth.npy"
+
+    args.mode == 'multi_target_from_cam1'
+
     img1 = cv2.imread(str(args.image_cam1))
-    img2 = cv2.imread(str(args.image_cam2))
     if img1 is None:
-        raise FileNotFoundError(f"Cannot read camera 1 image: {args.image_cam1}")
-    if img2 is None:
-        raise FileNotFoundError(f"Cannot read camera 2 image: {args.image_cam2}")
+        raise FileNotFoundError(f'Cannot read camera 1 image: {args.image_cam1}')
 
     K1, D1 = _read_camera_calibration(args.cam1_calib)
+
+    if args.mode == 'multi_target_from_cam1':
+        if args.depth_map_cam1 is None:
+            raise ValueError('Mode multi_target_from_cam1 requires --depth-map-cam1')
+        if not args.target_images or not args.target_calibs or not args.target_relative_poses:
+            raise ValueError('Provide --target-images, --target-calibs and --target-relative-poses for multi-target mode.')
+        if not (len(args.target_images) == len(args.target_calibs) == len(args.target_relative_poses)):
+            raise ValueError('target-images, target-calibs and target-relative-poses must have the same count.')
+
+        target_names = args.target_names or [f'target_{i}' for i in range(len(args.target_images))]
+        if len(target_names) != len(args.target_images):
+            raise ValueError('target-names count must match target-images count.')
+
+        targets = []
+        for image_path, calib_path, pose_path, name in zip(args.target_images, args.target_calibs, args.target_relative_poses, target_names):
+            img_t = cv2.imread(str(image_path))
+            if img_t is None:
+                raise FileNotFoundError(f'Cannot read target image: {image_path}')
+            K_t, D_t = _read_camera_calibration(calib_path)
+            T_t_s = _read_relative_pose(pose_path)
+            if args.invert_relative_pose:
+                T_t_s = np.linalg.inv(T_t_s)
+            targets.append({'name': name, 'image': img_t, 'K': K_t, 'D': D_t, 'T_target_source': T_t_s})
+
+        depth_cam1 = np.load(args.depth_map_cam1)
+        _interactive_transfer_points_multi_targets(
+            source_img=img1,
+            source_depth=depth_cam1,
+            K_source=K1,
+            D_source=D1,
+            targets=targets,
+            depth_scale=args.depth_scale,
+            circle_radius=args.circle_radius,
+            save_path=args.save,
+        )
+        return
+
+    if args.image_cam2 is None or args.cam2_calib is None or args.relative_pose is None:
+        raise ValueError('Modes cam1_to_cam2/cam2_to_cam1_via_cam1_depth require --image-cam2 --cam2-calib --relative-pose')
+
+    img2 = cv2.imread(str(args.image_cam2))
+    if img2 is None:
+        raise FileNotFoundError(f'Cannot read camera 2 image: {args.image_cam2}')
+
     K2, D2 = _read_camera_calibration(args.cam2_calib)
     T_cam2_cam1 = _read_relative_pose(args.relative_pose)
     if args.invert_relative_pose:
         T_cam2_cam1 = np.linalg.inv(T_cam2_cam1)
 
-    print("=" * 70)
-    print("RGBD -> 3D -> transform -> projection pipeline")
-    print(f"Source camera(cam1): {args.source_name}")
-    print(f"Target camera(cam2): {args.target_name}")
-    print(f"Mode: {args.mode}")
-    print(f"Image cam1: {args.image_cam1}")
-    print(f"Image cam2: {args.image_cam2}")
-    print(f"Depth map cam1: {args.depth_map_cam1}")
-    print("Using transform T_cam2_cam1:")
-    print(T_cam2_cam1)
-    print("=" * 70)
-
-    if args.save is None:
-        args.save = Path("out") / f"transfer_{args.source_name}_to_{args.target_name}_{args.mode}.png"
-
-    if args.mode == "cam1_to_cam2":
+    if args.mode == 'cam1_to_cam2':
         _interactive_transfer_points(
             img1=img1,
             img2=img2,
@@ -451,7 +702,7 @@ def main() -> None:
         return
 
     if args.depth_map_cam1 is None:
-        raise ValueError("Mode cam2_to_cam1_via_cam1_depth requires --depth-map-cam1")
+        raise ValueError('Mode cam2_to_cam1_via_cam1_depth requires --depth-map-cam1')
 
     depth_cam1 = np.load(args.depth_map_cam1)
     lut_u, lut_v, _zbuf = _build_target_to_source_lookup(
@@ -475,5 +726,5 @@ def main() -> None:
     )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
