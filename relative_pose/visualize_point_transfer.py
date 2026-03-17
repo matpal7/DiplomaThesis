@@ -607,6 +607,29 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    parent_dir = Path(__file__).resolve().parent.parent
+
+    dataset_dir = parent_dir / "dataset_11032026"
+    depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
+
+    args.image_cam1 = depth_dir / "1_realsense.png"
+    args.image_cam2 = depth_dir / "1_left.png"
+
+    out_dir = parent_dir / "out" / "cameras_parameters"
+
+    calib_dict_realsense = out_dir / "realsense_calibration.yaml"
+    calib_dict_zed = out_dir / "zed_calibration.yaml"
+    calib_dict_NICO_left = out_dir / "left_NICO.yaml"
+    calib_dict_stereo = out_dir / "calib_data.npy"
+
+
+    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left.yaml"
+    args.cam1_calib = calib_dict_realsense
+    args.cam2_calib = calib_dict_stereo
+    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "0_realsense_depth.npy"
+
+    args.mode == 'multi_target_from_cam1'
+
     img1 = cv2.imread(str(args.image_cam1))
     if img1 is None:
         raise FileNotFoundError(f'Cannot read camera 1 image: {args.image_cam1}')
