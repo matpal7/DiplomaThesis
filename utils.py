@@ -38,8 +38,8 @@ def get_l_r_image_fnames(img_folder, max_imgs=None):
 
     return images_l, images_r
 
-def get_depth_rgb_image_fnames(img_folder, max_imgs=None):
-    glob_string_d = '{}/*_realsense.png'.format(img_folder)
+def get_depth_rgb_image_fnames(img_folder, suffix="realsense", max_imgs=None):
+    glob_string_d = f"{img_folder}/*_{suffix}.png"
     images_d = sorted(glob.glob(glob_string_d))
 
     if max_imgs is not None:

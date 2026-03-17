@@ -1,4 +1,5 @@
 import os.path
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -47,7 +48,7 @@ class Image():
     #     self.bgrs = np.array([self.img[int(p[1]), int(p[0]), :] for p in self.p])
     #     self.X_ptrs = -np.ones(len(self.p)).astype(np.int)
 
-class ImageRealsense(Image):
+class ImageRGBD(Image):
     def __init__(self, img_path):
         self.pose = None
         self.img_path = img_path
@@ -59,6 +60,53 @@ class ImageRealsense(Image):
 
         self.dims = (self.img.shape[1], self.img.shape[0])
 
+        depth_path = self._get_depth_path()
+        if not os.path.exists(depth_path):
+            raise FileNotFoundError(f"Depth file not found: {depth_path}")
+
+        self.depth = np.load(depth_path).astype(np.float32)
+
+    def _get_depth_path(self):
+        """Return corresponding depth file path."""
+        base = Path(self.img_path)
+        depth_name = base.stem + "_depth.npy"
+        depth_path = base.parent.parent / "depth" / depth_name
+        return str(depth_path)
+
+    def get_depth(self):
+        return self.depth
+
+    def get_visualized_depth(
+            self,
+            vmin=None,
+            vmax=None,
+            color_map=cv2.COLORMAP_TURBO,
+    ):
+        """
+        Return colored depth map visualization.
+        """
+        depth = self.depth
+
+        valid = np.isfinite(depth) & (depth > 0)
+
+        if not np.any(valid):
+            raise ValueError("No valid depth values")
+
+        if vmin is None:
+            vmin = float(np.min(depth[valid]))
+
+        if vmax is None:
+            vmax = float(np.max(depth[valid]))
+
+        depth_clipped = np.clip(depth, vmin, vmax)
+        depth_norm = (depth_clipped - vmin) / (vmax - vmin + 1e-8)
+
+        depth_u8 = (depth_norm * 255).astype(np.uint8)
+
+        depth_color = cv2.applyColorMap(depth_u8, color_map)
+        depth_color[~valid] = 0
+
+        return depth_color
 
 def rotation_matrix_from_vectors(vec1, vec2):
     """ Find the rotation matrix that aligns vec1 to vec2
@@ -128,11 +176,12 @@ def load_l_r_images_rectified(calib_dict, img_dir, max_imgs=None):
 
     return imgs_l, imgs_r
 
-def load_realsense_rgb_images(img_dir, max_imgs= None):
-    fname_rgb = get_depth_rgb_image_fnames(img_dir, max_imgs=max_imgs)
-    imgs_rgb = [ImageRealsense(fname) for fname in fname_rgb]
+def load_rgbd_images(img_dir, suffix="realsense", max_imgs=None):
+    fname_rgb = get_depth_rgb_image_fnames(img_dir, suffix=suffix, max_imgs=max_imgs)
+    imgs_rgb = [ImageRGBD(fname) for fname in fname_rgb]
 
     return imgs_rgb
+
 
 def _as_omnidir_xi(xi) -> np.ndarray:
     xi = np.asarray(xi, dtype=np.float64)
@@ -268,5 +317,50 @@ def get_rectify_functions(
 
     return rectify_l, rectify_r, rect_data
 
+def extract_key(p: Path) -> str:
+    return p.stem.split("_")[0]
+
+def numeric_key(p: Path) -> int:
+    return int(extract_key(p))
+
+def load_rgb_depth_pairs(base_dir, suffix: str, max_imgs=None):
+    base_dir = Path(base_dir)
+    rgb_dir = base_dir / "rgb"
+    depth_dir = base_dir / "depth"
+
+    if not rgb_dir.exists():
+        raise FileNotFoundError(f"RGB directory not found: {rgb_dir}")
+    if not depth_dir.exists():
+        raise FileNotFoundError(f"Depth directory not found: {depth_dir}")
+
+    rgb_paths = sorted(
+        rgb_dir.glob(f"*_{suffix}.png"),
+        key=numeric_key
+    )
+
+    depth_candidates = {}
+    for p in depth_dir.glob(f"*_{suffix}_depth.npy"):
+        depth_candidates[extract_key(p)] = p
+
+    imgs = []
+    depths = []
+
+    for rgb_path in rgb_paths:
+        key = extract_key(rgb_path)
+        depth_path = depth_candidates.get(key)
+
+        if depth_path is None:
+            continue
+
+        rgb_img = ImageRGBD(str(rgb_path))
+        depth = np.load(depth_path)
+
+        imgs.append(rgb_img)
+        depths.append(depth)
+
+        if max_imgs is not None and len(imgs) >= max_imgs:
+            break
+
+    return imgs, depths
 
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from calibration.image import load_l_r_images_undistorted, load_realsense_rgb_images, get_undistort_functions, \
+from calibration.image import load_l_r_images_undistorted, load_rgbd_images, get_undistort_functions, \
     load_l_r_images_rectified
 from utils import load_dict
 
@@ -16,7 +16,7 @@ def show_undistorted_images(calib_dict, img_dir, correct_horizon=False, scale=4,
         calib_dict, img_dir, max_imgs=max_imgs
     )
     print(len(imgs_l))
-    imgs_rgb = load_realsense_rgb_images(img_dir, max_imgs=max_imgs)
+    imgs_rgb = load_rgbd_images(img_dir, max_imgs=max_imgs)
     for i, (img_l, img_r) in enumerate(zip(imgs_l, imgs_r)):
         img_d = None
         if len(imgs_rgb) != 0:
