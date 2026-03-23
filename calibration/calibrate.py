@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 
 from calibration.ChArUco.charuco_relative_pose_pnp import find_images
+from calibration.calibrate_stereo import extract_chessboard_points
 from calibration.image import get_undistort_functions
 from utils import get_l_r_image_fnames, load_dict
 
@@ -125,6 +126,10 @@ def _save_calibration_yaml(
 
     fs.write("K", data["K"])
     fs.write("D", data["D"])
+    for attribute in("xi", "map1", "map2"):
+        if attribute in data.keys():
+            fs.write(attribute, data[attribute])
+
     fs.write("image_width", data["image_size"][0])
     fs.write("image_height", data["image_size"][1])
     fs.write("reprojection_error", data["reprojection_error"])
@@ -214,6 +219,7 @@ def calibrate(
     frame_size=(1280, 720)
 ):
     images = find_images(img_folder, suffix)[:max_imgs]
+    print(img_folder)
 
     obj_pts, img_pts, image_size = _collect_calibration_points(
         image_list=images,
@@ -225,7 +231,7 @@ def calibrate(
         debug=debug,
     )
 
-    calib = _run_calibration(obj_pts, img_pts, image_size, label=suffix, frame_size=frame_size)
+    calib = _run_calibration(obj_pts, img_pts, image_size, label=suffix)
 
     rectified_calib_dict = {
         "camera": suffix,
@@ -254,23 +260,59 @@ def calibrate(
     print("Saved calibration to:", out_path)
     return rectified_calib_dict
 
+
+def calibrate_mono(
+    img_folder,
+    camera_side="left",
+    chessboard_x=6,
+    chessboard_y=4,
+    chessboard_dim=54.0,
+    max_imgs=None):
+    obj_pts, img_pts_l, img_pts_r, img_dim_l, img_dim_r = extract_chessboard_points(img_folder,
+                                                                                    chessboard_x=chessboard_x,
+                                                                                    chessboard_y=chessboard_y,
+                                                                                    chessboard_dim=chessboard_dim,
+                                                                                    debug=debug, max_imgs=max_imgs)
+
+    img_pts = img_pts_l
+    img_dim = img_dim_l
+    if camera_side == "right":
+        img_pts = img_pts_r
+        img_dim = img_dim_r
+
+    retval, K, xi, D, rvecs, tvecs, idx = cv2.omnidir.calibrate(obj_pts, img_pts, img_dim, None, None,
+                                                                None, 0,
+                                                                CRITERIA)
+
+    print("retval: " + camera_side, retval)
+    map1, map2 = cv2.omnidir.initUndistortRectifyMap(K, D, xi, np.eye(3), K, img_dim, cv2.CV_16SC2,
+                                                     cv2.omnidir.RECTIFY_PERSPECTIVE)
+
+    camera_dict = {'K': K, 'xi': xi, 'D': D, 'map1': map1, 'map2': map2, 'img_size': img_dim}
+
+    return camera_dict
+
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parent.parent
-    dataset_dir = parent_dir / "dataset_11032026"
-    calib_imgs_dir = dataset_dir / "stereo_4k_calibration" / "rgb"
+    date = "11032026"
+    dataset_dir = parent_dir / f"dataset_{date}"
+    calib_imgs_dir = dataset_dir / "stereo_4k_calibration_stereo" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    out_dir = parent_dir / "out" / "cameras_parameters"
-    debug = 1
+    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
+    debug = 0
 
-    calib_dict = load_dict(out_dir / "calib_data.npy")
+    # calib_dict = load_dict(out_dir / "calib_data.npy")
 
 
-    # calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=54.0, max_imgs=40, chessboard_x=6,
-    #           chessboard_y=4, debug=debug)
-    # calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=54.0, max_imgs=40, chessboard_x=6,
-    #                         chessboard_y=4, debug=debug)
+    calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=54.0, max_imgs=170, chessboard_x=6,
+                            chessboard_y=4, debug=debug)
+    calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=54.0, max_imgs=170, chessboard_x=6,
+                            chessboard_y=4, debug=debug)
 
-    # calibrate_on_undistored(relative_pose_dir, calib_dict, str(out_dir), camera_side="left", chessboard_dim=54.0,
-    #                         max_imgs=40, chessboard_x=6, chessboard_y=4, debug=debug)
-    calibrate_on_undistored(relative_pose_dir, calib_dict, str(out_dir), camera_side="right", chessboard_dim=54.0,
-                            max_imgs=40, chessboard_x=6, chessboard_y=4, debug=debug, frame_size=(3840, 2160))
+    # left_dict = calibrate_mono(calib_imgs_dir, camera_side="left", chessboard_dim=30.0,
+    #                         max_imgs=40, chessboard_x=8, chessboard_y=5)
+
+    # print("calibrate_mono", left_dict)
+
+    # right_dict = calibrate_mono(calib_imgs_dir, camera_side="right", chessboard_dim=0.030,
+    #                            max_imgs=40, chessboard_x=8, chessboard_y=5)

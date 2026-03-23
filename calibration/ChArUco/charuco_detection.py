@@ -13,12 +13,12 @@ SQUARE_LENGTH = 0.054
 MARKER_LENGTH = 0.037
 TRESHOLD_CORNERS = 12
 
-def create_charuco_board():
+def create_charuco_board(squares_horizontally=6, squares_vertically=8, squares_length=32.0, marker_length=22.0):
     aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
     board = cv2.aruco.CharucoBoard(
-        (SQUARES_HORIZONTALLY, SQUARES_VERTICALLY),
-        SQUARE_LENGTH,
-        MARKER_LENGTH,
+        (squares_horizontally, squares_vertically),
+        squares_length,
+        marker_length,
         aruco_dict
     )
     detector_params = cv2.aruco.DetectorParameters()

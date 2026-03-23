@@ -5,17 +5,20 @@ import cv2
 import numpy as np
 import re
 
-from utils import get_l_r_image_fnames, get_depth_rgb_image_fnames
+from utils import get_l_r_image_fnames, get_depth_rgb_image_fnames, load_dict
 
 
-class Image():
-    def __init__(self, img_path, undistort_function):
+class Image:
+    def __init__(self, img_path, undistort_function=None):
         self.pose = None
         self.img_path = img_path
         self.img_basename = os.path.basename(img_path)
 
-        img_distorted = cv2.imread(img_path)
-        self.img = undistort_function(img_distorted)
+        img = cv2.imread(img_path)
+        if img is None:
+            raise FileNotFoundError(f"Cannot load image at path: {img_path}")
+
+        self.img = undistort_function(img) if undistort_function is not None else img
         self.dims = (self.img.shape[1], self.img.shape[0])
 
     def get_small_img(self, scale=4):
@@ -23,16 +26,12 @@ class Image():
         return cv2.resize(self.img, mini_dims)
 
     def scaled_dims(self, scale):
-        mini_dims = (self.dims[0] // scale, self.dims[1] // scale)
-        return mini_dims
+        return (self.dims[0] // scale, self.dims[1] // scale)
 
     def get_image_number(self):
         basename = os.path.basename(self.img_path)
         match = re.match(r'(\d+)_', basename)
-        if match:
-            return int(match.group(1))
-        else:
-            return None
+        return int(match.group(1)) if match else None
 
     def get_path(self):
         return self.img_path
@@ -41,24 +40,9 @@ class Image():
         return cv2.resize(self.img, resolution, interpolation=cv2.INTER_AREA)
 
 
-    # def set_kp_and_des(self, kp, des):
-    #     self.kp = kp
-    #     self.p = np.array([p.pt for p in kp])
-    #     self.des = des
-    #     self.bgrs = np.array([self.img[int(p[1]), int(p[0]), :] for p in self.p])
-    #     self.X_ptrs = -np.ones(len(self.p)).astype(np.int)
-
 class ImageRGBD(Image):
-    def __init__(self, img_path):
-        self.pose = None
-        self.img_path = img_path
-        self.img_basename = os.path.basename(img_path)
-
-        self.img = cv2.imread(img_path)
-        if self.img is None:
-            raise FileNotFoundError(f"Cannot load image at path: {img_path}")
-
-        self.dims = (self.img.shape[1], self.img.shape[0])
+    def __init__(self, img_path, undistort_function=None, undistort_depth=True):
+        super().__init__(img_path, undistort_function=undistort_function)
 
         depth_path = self._get_depth_path()
         if not os.path.exists(depth_path):
@@ -66,47 +50,14 @@ class ImageRGBD(Image):
 
         self.depth = np.load(depth_path).astype(np.float32)
 
+        if undistort_function is not None and undistort_depth:
+            self.depth = undistort_function(self.depth)
+
     def _get_depth_path(self):
-        """Return corresponding depth file path."""
         base = Path(self.img_path)
         depth_name = base.stem + "_depth.npy"
         depth_path = base.parent.parent / "depth" / depth_name
         return str(depth_path)
-
-    def get_depth(self):
-        return self.depth
-
-    def get_visualized_depth(
-            self,
-            vmin=None,
-            vmax=None,
-            color_map=cv2.COLORMAP_TURBO,
-    ):
-        """
-        Return colored depth map visualization.
-        """
-        depth = self.depth
-
-        valid = np.isfinite(depth) & (depth > 0)
-
-        if not np.any(valid):
-            raise ValueError("No valid depth values")
-
-        if vmin is None:
-            vmin = float(np.min(depth[valid]))
-
-        if vmax is None:
-            vmax = float(np.max(depth[valid]))
-
-        depth_clipped = np.clip(depth, vmin, vmax)
-        depth_norm = (depth_clipped - vmin) / (vmax - vmin + 1e-8)
-
-        depth_u8 = (depth_norm * 255).astype(np.uint8)
-
-        depth_color = cv2.applyColorMap(depth_u8, color_map)
-        depth_color[~valid] = 0
-
-        return depth_color
 
 def rotation_matrix_from_vectors(vec1, vec2):
     """ Find the rotation matrix that aligns vec1 to vec2
@@ -133,8 +84,40 @@ def get_corrective_rotation(K, horizon):
     R = rotation_matrix_from_vectors(n, np.array([0, -1, 0]))
     return R
 
+def load_calib_data(calib_file, type):
+    allowed_types = {"left", "right", "mono", "zed", "realsense"}
+    if type not in allowed_types:
+        raise ValueError(
+            f"Invalid calib_type '{type}'. Allowed values are: {sorted(allowed_types)}"
+        )
+    # mono-like YAML calibrations
+    if type in ("mono", "zed", "realsense"):
+        return load_yaml_calibration(calib_file)
 
-def get_undistort_functions(calib_dict, correct_horizon=False):
+    # stereo calib_dict
+    calib = load_dict(calib_file)
+
+    if type == "left":
+        calib["K"] = calib["new_K_l"].copy()
+        calib["image_size"] = tuple(int(x) for x in np.asarray(calib["img_dim_l"]).reshape(-1)[:2])
+    else:
+        calib["K"] = calib["new_K_r"]
+        calib["image_size"] = tuple(int(x) for x in np.asarray(calib["img_dim_r"]).reshape(-1)[:2])
+    calib["D"] = np.zeros((5, 1), dtype=np.float64)
+    return calib
+
+
+
+def get_undistort_functions(calib_file, stereo=True):
+    if stereo:
+        return get_undistort_functions_stereo(calib_file)
+    return get_undistort_function_mono(calib_file)
+
+def get_undistort_functions_stereo(calib_file, correct_horizon=False):
+    if isinstance(calib_file, (str, Path, os.PathLike)):
+        calib_dict = load_dict(calib_file)
+    else:
+        calib_dict = calib_file
     if correct_horizon:
         R_l = get_corrective_rotation(calib_dict['new_K_l'], calib_dict['horizon_l'])
         R_r = get_corrective_rotation(calib_dict['new_K_r'], calib_dict['horizon_r'])
@@ -159,7 +142,7 @@ def get_undistort_functions(calib_dict, correct_horizon=False):
 
 
 def load_l_r_images_undistorted(calib_dict, img_dir, correct_horizon=False, max_imgs=None):
-    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=correct_horizon)
+    undistort_l, undistort_r = get_undistort_functions(calib_dict)
     fnames_l, fnames_r = get_l_r_image_fnames(img_dir, max_imgs=max_imgs)
 
     imgs_l = [Image(fname, undistort_l) for fname in fnames_l]
@@ -363,4 +346,62 @@ def load_rgb_depth_pairs(base_dir, suffix: str, max_imgs=None):
 
     return imgs, depths
 
+def load_yaml_calibration(yaml_path: Path) -> dict:
+    fs = cv2.FileStorage(str(yaml_path), cv2.FILE_STORAGE_READ)
+    if not fs.isOpened():
+        raise FileNotFoundError(f"Cannot open calibration yaml file: {yaml_path}")
 
+    try:
+        K = fs.getNode("K").mat()
+        D = fs.getNode("D").mat()
+
+        image_width_node = fs.getNode("image_width")
+        image_height_node = fs.getNode("image_height")
+
+        image_width = int(image_width_node.real()) if not image_width_node.empty() else None
+        image_height = int(image_height_node.real()) if not image_height_node.empty() else None
+    finally:
+        fs.release()
+
+    if K is None or D is None:
+        raise ValueError(f"Calibration YAML must contain nodes 'K' and 'D': {yaml_path}")
+
+    return {
+        "K": np.asarray(K, dtype=np.float64).reshape(3, 3),
+        "D": np.asarray(D, dtype=np.float64),
+        "image_size": (image_width, image_height) if image_width is not None and image_height is not None else None,
+    }
+
+
+def get_undistort_function_mono(calib):
+    K = calib["K"]
+    D = calib["D"]
+    image_size = calib["image_size"]
+
+    if image_size is None:
+        raise ValueError("YAML must contain image_width and image_height")
+
+    map1, map2 = cv2.initUndistortRectifyMap(
+        cameraMatrix=K,
+        distCoeffs=D,
+        R=np.eye(3, dtype=np.float64),
+        newCameraMatrix=K,
+        size=image_size,
+        m1type=cv2.CV_16SC2,
+    )
+
+    def undistort(img: np.ndarray) -> np.ndarray:
+        if (img.shape[1], img.shape[0]) != image_size:
+            raise ValueError(
+                f"Image size {(img.shape[1], img.shape[0])} does not match calibration size {image_size}"
+            )
+
+        return cv2.remap(
+            img,
+            map1,
+            map2,
+            interpolation=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+        )
+
+    return undistort

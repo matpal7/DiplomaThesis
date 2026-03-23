@@ -23,15 +23,19 @@ def save_zed_calibration(out_dir, filename="zed_left_calibration_factory.yaml"):
         calib = cam_info.camera_configuration.calibration_parameters
         left = calib.left_cam
 
+        # image size
+        resolution = cam_info.camera_configuration.resolution
+        image_width = int(resolution.width)
+        image_height = int(resolution.height)
+
         K = np.array([
             [left.fx, 0, left.cx],
             [0, left.fy, left.cy],
             [0, 0, 1]
         ], dtype=np.float64)
 
-        # Stereolabs documents distortion as k1, k2, k3, p1, p2.
-        # OpenCV usually expects [k1, k2, p1, p2, k3],
-        # so reorder it before saving.
+        # Stereolabs distortion: k1, k2, k3, p1, p2
+        # OpenCV: k1, k2, p1, p2, k3
         disto = left.disto
         D = np.array([
             disto[0],  # k1
@@ -46,45 +50,61 @@ def save_zed_calibration(out_dir, filename="zed_left_calibration_factory.yaml"):
         fs = cv2.FileStorage(str(out_path), cv2.FILE_STORAGE_WRITE)
         fs.write("K", K)
         fs.write("D", D)
+        fs.write("image_width", image_width)
+        fs.write("image_height", image_height)
         fs.release()
 
-        print("Calibration saved to", filename)
+        print("Calibration saved to", out_path)
 
     finally:
         zed.close()
 
-def save_realsense_calibration(out_dir, filename="realsense_calibration_factory.yaml"):
 
+def save_realsense_calibration(out_dir, filename="realsense_calibration_factory.yaml"):
     pipeline = rs.pipeline()
     config = rs.config()
-    config.enable_stream(rs.stream.color, FRAME_SIZE_REALSENSE[0], FRAME_SIZE_REALSENSE[1], rs.format.bgr8, 30)
+    config.enable_stream(
+        rs.stream.color,
+        FRAME_SIZE_REALSENSE[0],
+        FRAME_SIZE_REALSENSE[1],
+        rs.format.bgr8,
+        30
+    )
 
     profile = pipeline.start(config)
 
-    stream = profile.get_stream(rs.stream.color)
-    intr = stream.as_video_stream_profile().get_intrinsics()
+    try:
+        stream = profile.get_stream(rs.stream.color)
+        intr = stream.as_video_stream_profile().get_intrinsics()
 
-    pipeline.stop()
+        image_width = int(intr.width)
+        image_height = int(intr.height)
 
-    K = np.array([
-        [intr.fx, 0, intr.ppx],
-        [0, intr.fy, intr.ppy],
-        [0, 0, 1]
-    ])
+        K = np.array([
+            [intr.fx, 0, intr.ppx],
+            [0, intr.fy, intr.ppy],
+            [0, 0, 1]
+        ], dtype=np.float64)
 
-    D = np.array(intr.coeffs)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / filename
-    fs = cv2.FileStorage(str(out_path), cv2.FILE_STORAGE_WRITE)
-    fs.write("K", K)
-    fs.write("D", D)
-    fs.release()
+        D = np.array(intr.coeffs, dtype=np.float64)
 
-    print("Calibration saved to", filename)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / filename
+        fs = cv2.FileStorage(str(out_path), cv2.FILE_STORAGE_WRITE)
+        fs.write("K", K)
+        fs.write("D", D)
+        fs.write("image_width", image_width)
+        fs.write("image_height", image_height)
+        fs.release()
+
+        print("Calibration saved to", out_path)
+
+    finally:
+        pipeline.stop()
 
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parent.parent
     out_dir = parent_dir / "out" / "cameras_parameters"
 
-    # save_zed_calibration(out_dir)
+    save_zed_calibration(out_dir)
     save_realsense_calibration(out_dir)

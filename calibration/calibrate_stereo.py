@@ -70,9 +70,6 @@ def extract_chessboard_points(calib_img_folder, undistort_l=None, undistort_r=No
     return obj_pts, img_pts_l, img_pts_r, img_dim_l, img_dim_r
 
 
-
-
-
 def calibrate(calib_img_folder, chessboard_x=7, chessboard_y=4, chessboard_dim=31.0, debug=0, max_imgs=None):
     obj_pts, img_pts_l, img_pts_r, img_dim_l, img_dim_r = extract_chessboard_points(calib_img_folder,
                                                                                     chessboard_x=chessboard_x,
@@ -191,13 +188,14 @@ if __name__ == '__main__':
     dataset_dir = parent_dir / "dataset_11032026"
     calib_imgs_dir = dataset_dir / "stereo_4k_calibration" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    out_dir = parent_dir / "out" / "cameras_parameters"
-    debug = 2
+    out_dir = parent_dir / "out" / "cameras_parameters_11032026"
+    debug = 0
 
 
-    # calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=40, chessboard_x=8, chessboard_y=5)
-    # save_dict(calib_dict, out_dir)
-    calib_dict = load_dict(out_dir / "calib_data.npy")
-    print(calib_dict["new_K_l"])
-
+    calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=45, chessboard_x=8, chessboard_y=5)
+    baseline_m = np.linalg.norm(calib_dict["tvec"].reshape(-1)) / 1000.0
+    print("BASELINE in meters:", baseline_m)
+    save_dict(calib_dict, out_dir)
+    # calib_dict = load_dict(out_dir / "calib_data.npy")
+    #
     # show_undistorted_images(calib_dict, calib_imgs_dir)

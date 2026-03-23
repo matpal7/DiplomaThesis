@@ -13,7 +13,7 @@ from calibration.ChArUco.charuco_detection import (
     TRESHOLD_CORNERS,
     create_charuco_board,
 )
-from calibration.image import get_undistort_functions
+from calibration.image import get_undistort_functions, load_yaml_calibration, load_calib_data
 from utils import load_dict, save_dict
 
 MAX_REPROJ_ERR = 2.0
@@ -26,22 +26,6 @@ class PoseSample:
     reproj_cam2: float
 
 
-def load_yaml_calibration(yaml_path: Path) -> dict:
-    fs = cv2.FileStorage(str(yaml_path), cv2.FILE_STORAGE_READ)
-    if not fs.isOpened():
-        raise FileNotFoundError(f"Cannot open calibration yaml file: {yaml_path}")
-
-    K = fs.getNode("K").mat()
-    D = fs.getNode("D").mat()
-    fs.release()
-
-    if K is None or D is None:
-        raise ValueError(f"Calibration YAML must contain nodes 'K' and 'D': {yaml_path}")
-
-    return {
-        "K": K,
-        "D": D,
-    }
 
 
 def load_camera_calibration(path: Path, suffix="left") -> tuple[np.ndarray, np.ndarray]:
@@ -512,22 +496,21 @@ def _camera_suffix_from_calib_path(calib_path: Path) -> str:
     return calib_path.stem.split("_")[0].lower()
 
 
-def _get_undistort_function(camera_suffix: str, path: Path):
-    """
-    Returns undistortion function for left/right stereo cameras.
-    For non-stereo cameras returns None.
-    """
-    if path.suffix.lower() != ".npy":
-        return None
+def _get_undistort_function(calib_dict, camera_suffix):
+    use_stereo = False
+    if camera_suffix in ("left", "right"):
+        use_stereo = True
+    if not use_stereo:
+        return get_undistort_functions(calib_dict, False)
 
-    calib_dict = load_dict(path)
-    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=False)
+    undistort_l, undistort_r = get_undistort_functions(calib_dict, stereo=use_stereo)
 
     if camera_suffix == "left":
         return undistort_l
     if camera_suffix == "right":
         return undistort_r
-    return None
+    # Mono
+    return undistort_l
 
 
 def estimate_relative_pose(
@@ -538,22 +521,32 @@ def estimate_relative_pose(
     cam1_suffix: str,
     cam2_suffix: str,
     debug: int = 2,
+    squares_horizontally=6,
+    squares_vertically=8,
+    squares_length=32.0,
+    marker_length=22.0
 ) -> None:
     image_dir = Path(image_dir)
     cam1_calib = Path(cam1_calib)
     cam2_calib = Path(cam2_calib)
     output_path = Path(output_path)
 
-    K_cam1, dist_cam1 = load_camera_calibration(cam1_calib, suffix=cam1_suffix)
-    K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)
+    calib_dict_cam1 = load_calib_data(cam1_calib, type=cam1_suffix)
+    calib_dict_cam2 = load_calib_data(cam2_calib, type=cam2_suffix)
 
-    undistort_1 = _get_undistort_function(cam1_suffix, cam1_calib)
-    undistort_2 = _get_undistort_function(cam2_suffix, cam2_calib)
+    K_cam1, dist_cam1 = calib_dict_cam1["K"], calib_dict_cam1["D"]
+    K_cam2, dist_cam2 = calib_dict_cam2["K"], calib_dict_cam2["D"]
+
+    undistort_1 = _get_undistort_function(calib_dict_cam1, cam1_suffix)
+    undistort_2 = _get_undistort_function(calib_dict_cam2, cam2_suffix)
+
+    undistort_1 = None
+    undistort_2 = None
 
     print(f"Camera 1: {cam1_suffix}")
     print(f"Camera 2: {cam2_suffix}")
 
-    _, board, detector = create_charuco_board()
+    _, board, detector = create_charuco_board(squares_horizontally=squares_horizontally, squares_vertically=squares_vertically, squares_length=squares_length, marker_length=marker_length)
     pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix)
 
     if not pairs:
@@ -671,7 +664,7 @@ def estimate_relative_pose(
     rotations = [sample.T_cam2_cam1[:3, :3] for sample in inliers]
     translations = np.array([sample.T_cam2_cam1[:3, 3] for sample in inliers], dtype=np.float64)
 
-    R_avg = average_rotations(rotations)
+    R_avg = average_rotations(rotations)    #použiť knižnicu, nie je trivialne | joint optimization cez všetky pozorovania naraz
     t_avg = np.mean(translations, axis=0)
 
     T_avg = np.eye(4, dtype=np.float64)
@@ -786,20 +779,20 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     parent_dir = Path(__file__).resolve().parent.parent.parent
-
-    dataset_dir = parent_dir / 'dataset_11032026'
+    date = "11032026"
+    dataset_dir = parent_dir / f'dataset_{date}'
     depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
-    out_dir = parent_dir / "out" / "cameras_parameters"
+    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
 
     calib_dict_stereo =  out_dir / "calib_data.npy"
 
     calib_dict_NICO_left = out_dir / "left_NICO.yaml"
     calib_dict_NICO_right = out_dir / "right_NICO.yaml"
-    calib_dict_realsense = out_dir / "realsense_calibration.yaml"
-    calib_dict_zed = out_dir / "zed_calibration.yaml"
+    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
+    calib_dict_zed = out_dir / "zed_calibration_1280x720.yaml"
 
     cam1_calib = calib_dict_realsense
-    cam2_calib = calib_dict_stereo
+    cam2_calib = calib_dict_zed
 
     out_dir = out_dir / "relative_pose"
 
@@ -813,6 +806,7 @@ if __name__ == "__main__":
         cam2_calib=args.cam2_calib,
         output_path=args.output,
         cam1_suffix="realsense",
-        cam2_suffix="left",
-        debug=0
+        cam2_suffix="zed",
+        debug=1,
+        squares_horizontally=5, squares_vertically=7, squares_length=54.0, marker_length=37.0
     )

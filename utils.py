@@ -67,3 +67,6 @@ def scale_intrinsics(K: np.ndarray, old_size: tuple[int, int], new_size: tuple[i
     K_new[1, 2] *= sy  # cy
 
     return K_new
+
+
+
