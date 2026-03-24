@@ -618,8 +618,8 @@ def main() -> None:
     dataset_dir = parent_dir / f"dataset_{date}"
     depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
 
-    args.image_cam1 = depth_dir / "22_realsense.png"
-    args.image_cam2 = depth_dir / "22_zed.png"
+    args.image_cam1 = depth_dir / "10_realsense.png"
+    args.image_cam2 = depth_dir / "10_zed.png"
 
     out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
 
@@ -633,7 +633,7 @@ def main() -> None:
     args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_zed.yaml"
     args.cam1_calib = calib_dict_realsense
     args.cam2_calib = calib_dict_zed
-    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "22_realsense_depth.npy"
+    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "10_realsense_depth.npy"
 
     args.mode == 'cam1_to_cam2'
 

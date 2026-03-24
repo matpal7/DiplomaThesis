@@ -24,7 +24,12 @@ class PoseSample:
     T_cam2_cam1: np.ndarray
     reproj_cam1: float
     reproj_cam2: float
-
+    rvec_cam1_board: np.ndarray
+    tvec_cam1_board: np.ndarray
+    obj_pts_cam1: np.ndarray
+    img_pts_cam1: np.ndarray
+    obj_pts_cam2: np.ndarray
+    img_pts_cam2: np.ndarray
 
 
 
@@ -512,6 +517,53 @@ def _get_undistort_function(calib_dict, camera_suffix):
     # Mono
     return undistort_l
 
+def compute_reproj_rms_joint_basic(
+    samples: list[PoseSample],
+    K_cam1: np.ndarray,
+    dist_cam1: np.ndarray,
+    K_cam2: np.ndarray,
+    dist_cam2: np.ndarray,
+    T_cam2_cam1: np.ndarray,
+) -> float:
+    residual_blocks = []
+
+    for sample in samples:
+        rvec_1 = sample.rvec_cam1_board
+        tvec_1 = sample.tvec_cam1_board
+
+        if sample.obj_pts_cam1.shape[0] > 0:
+            proj_1, _ = cv2.projectPoints(
+                sample.obj_pts_cam1,
+                rvec_1,
+                tvec_1,
+                K_cam1,
+                dist_cam1,
+            )
+            res_1 = proj_1.reshape(-1, 2) - sample.img_pts_cam1.reshape(-1, 2)
+            residual_blocks.append(res_1.reshape(-1))
+
+        T_cam1_board = rt_to_T(rvec_1, tvec_1)
+        T_cam2_board = T_cam2_cam1 @ T_cam1_board
+        rvec_2, tvec_2 = T_to_rt(T_cam2_board)
+
+        if sample.obj_pts_cam2.shape[0] > 0:
+            proj_2, _ = cv2.projectPoints(
+                sample.obj_pts_cam2,
+                rvec_2,
+                tvec_2,
+                K_cam2,
+                dist_cam2,
+            )
+            res_2 = proj_2.reshape(-1, 2) - sample.img_pts_cam2.reshape(-1, 2)
+            residual_blocks.append(res_2.reshape(-1))
+
+    if not residual_blocks:
+        return float("nan")
+
+    residuals = np.concatenate(residual_blocks).astype(np.float64)
+    rms = float(np.sqrt(np.mean(residuals ** 2)))
+    return rms
+
 
 def estimate_relative_pose(
     image_dir: Path,
@@ -637,12 +689,26 @@ def estimate_relative_pose(
         print(f"{pair_name}: baseline={baseline_pair:.4f}")
         print(f"{pair_name}: accepted, reproj_cam1={err_1:.3f}px reproj_cam2={err_2:.3f}px")
 
+        ids1 = charuco_ids_1.flatten().astype(np.int32)
+        ids2 = charuco_ids_2.flatten().astype(np.int32)
+
+        obj_pts_1 = board.getChessboardCorners()[ids1].reshape(-1, 1, 3).astype(np.float64)
+        img_pts_1 = charuco_corners_1.reshape(-1, 1, 2).astype(np.float64)
+
+        obj_pts_2 = board.getChessboardCorners()[ids2].reshape(-1, 1, 3).astype(np.float64)
+        img_pts_2 = charuco_corners_2.reshape(-1, 1, 2).astype(np.float64)
         samples.append(
             PoseSample(
                 pair_name=pair_name,
                 T_cam2_cam1=T_cam2_cam1,
                 reproj_cam1=err_1,
                 reproj_cam2=err_2,
+                rvec_cam1_board=rvec_1.copy(),
+                tvec_cam1_board=tvec_1.copy(),
+                obj_pts_cam1=obj_pts_1,
+                img_pts_cam1=img_pts_1,
+                obj_pts_cam2=obj_pts_2,
+                img_pts_cam2=img_pts_2,
             )
         )
 
@@ -670,9 +736,18 @@ def estimate_relative_pose(
     T_avg = np.eye(4, dtype=np.float64)
     T_avg[:3, :3] = R_avg
     T_avg[:3, 3] = t_avg
+    reproj_rms = compute_reproj_rms_joint_basic(
+        samples=inliers,
+        K_cam1=K_cam1,
+        dist_cam1=dist_cam1,
+        K_cam2=K_cam2,
+        dist_cam2=dist_cam2,
+        T_cam2_cam1=T_avg,
+    )
 
     baseline = float(np.linalg.norm(t_avg))
     print("BASELINE:", baseline)
+    print(f"Final joint reprojection RMS: {reproj_rms:.4f}px")
 
     rot_dev = [rotation_angle_deg(R, R_avg) for R in rotations]
     trans_dev = [float(np.linalg.norm(t - t_avg)) for t in translations]
@@ -689,6 +764,7 @@ def estimate_relative_pose(
         R_cam2_cam1=R_avg,
         t_cam2_cam1=t_avg,
         baseline=baseline,
+        reproj_rms_joint=reproj_rms,
         num_pairs_total=len(pairs),
         num_pairs_used=len(samples),
         rotation_deviation_deg_mean=float(np.mean(rot_dev)),
@@ -711,6 +787,7 @@ def save_relative_pose_yaml(
     R_cam2_cam1: np.ndarray,
     t_cam2_cam1: np.ndarray,
     baseline: float,
+    reproj_rms_joint: float,
     num_pairs_total: int,
     num_pairs_used: int,
     rotation_deviation_deg_mean: float,
@@ -754,6 +831,7 @@ def save_relative_pose_yaml(
         fs.write("t_cam1_cam2", t_cam1_cam2.reshape(3, 1))
 
         fs.write("baseline", float(baseline))
+        fs.write("reproj_rms_joint", float(reproj_rms_joint))
         fs.write("num_pairs_total", int(num_pairs_total))
         fs.write("num_pairs_used", int(num_pairs_used))
 
@@ -807,6 +885,6 @@ if __name__ == "__main__":
         output_path=args.output,
         cam1_suffix="realsense",
         cam2_suffix="zed",
-        debug=1,
-        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0
+        debug=0,
+        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0,
     )

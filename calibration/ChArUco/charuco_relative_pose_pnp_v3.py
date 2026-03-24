@@ -18,7 +18,7 @@ from calibration.image import get_undistort_functions, load_yaml_calibration, lo
 from utils import load_dict, save_dict
 
 MAX_REPROJ_ERR = 2.0
-MIN_COMMON_CORNERS = 8
+MIN_COMMON_CORNERS = 20
 MIN_PAIR_WEIGHT = 0.25
 MAX_PAIR_WEIGHT = 4.0
 
@@ -71,7 +71,7 @@ def load_camera_calibration(path: Path, suffix="left") -> tuple[np.ndarray, np.n
         raise ValueError(f"Unsupported calibration file format: {path}")
 
 
-def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> list[tuple[Path, Path, str]]:
+def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str, max_imgs: int) -> list[tuple[Path, Path, str]]:
 
     def extract_key(p: Path) -> str:
         return p.stem.split("_")[0]
@@ -99,6 +99,9 @@ def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> lis
             continue
 
         pairs.append((cam1, cam2, key))
+
+    if max_imgs is not None:
+        pairs = pairs[:max_imgs]
 
     return pairs
 
@@ -209,10 +212,48 @@ def optimize_global_camera_pose(
     T_global[:3, :3] = R_global
     T_global[:3, 3] = t_global.reshape(3)
 
-    residuals = _joint_residuals(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
-    rms = float(np.sqrt(np.mean(residuals ** 2))) if residuals.size > 0 else float("nan")
+    # residuals = _joint_residuals(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
+    # rms = float(np.sqrt(np.mean(residuals ** 2))) if residuals.size > 0 else float("nan")
+    raw_residuals = _joint_residuals_unweighted(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
+    rms = float(np.sqrt(np.mean(raw_residuals ** 2))) if raw_residuals.size > 0 else float("nan")
     return T_global, R_global, t_global.reshape(3), rms
 
+def _joint_residuals_unweighted(
+    x: np.ndarray,
+    samples: list[PoseSample],
+    K_cam1: np.ndarray,
+    dist_cam1: np.ndarray,
+    K_cam2: np.ndarray,
+    dist_cam2: np.ndarray,
+) -> np.ndarray:
+    rvec_global, t_global, pair_params = _unpack_optimization_params(x, len(samples))
+
+    R_global, _ = cv2.Rodrigues(rvec_global)
+    T_cam2_cam1 = np.eye(4, dtype=np.float64)
+    T_cam2_cam1[:3, :3] = R_global
+    T_cam2_cam1[:3, 3] = t_global.reshape(3)
+
+    residual_blocks = []
+
+    for sample, (rvec_1, tvec_1) in zip(samples, pair_params):
+        if sample.obj_pts_cam1.shape[0] > 0:
+            proj_1, _ = cv2.projectPoints(sample.obj_pts_cam1, rvec_1, tvec_1, K_cam1, dist_cam1)
+            res_1 = proj_1.reshape(-1, 2) - sample.img_pts_cam1.reshape(-1, 2)
+            residual_blocks.append(res_1.reshape(-1))
+
+        T_cam1_board = rt_to_T(rvec_1, tvec_1)
+        T_cam2_board = T_cam2_cam1 @ T_cam1_board
+        rvec_2, tvec_2 = T_to_rt(T_cam2_board)
+
+        if sample.obj_pts_cam2.shape[0] > 0:
+            proj_2, _ = cv2.projectPoints(sample.obj_pts_cam2, rvec_2, tvec_2, K_cam2, dist_cam2)
+            res_2 = proj_2.reshape(-1, 2) - sample.img_pts_cam2.reshape(-1, 2)
+            residual_blocks.append(res_2.reshape(-1))
+
+    if not residual_blocks:
+        return np.array([], dtype=np.float64)
+
+    return np.concatenate(residual_blocks).astype(np.float64)
 
 def _draw_charuco_points(
     image: np.ndarray,
@@ -665,7 +706,8 @@ def estimate_relative_pose(
     squares_length=32.0,
     marker_length=22.0,
     min_common_corners: int = MIN_COMMON_CORNERS,
-    use_pair_weights: bool = True,
+    use_pair_weights: bool = False,
+    max_imgs: int = None
 
 ) -> None:
     image_dir = Path(image_dir)
@@ -691,7 +733,7 @@ def estimate_relative_pose(
     print(f"Camera 2: {cam2_suffix}")
 
     _, board, detector = create_charuco_board(squares_horizontally=squares_horizontally, squares_vertically=squares_vertically, squares_length=squares_length, marker_length=marker_length)
-    pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix)
+    pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix, max_imgs=max_imgs)
 
     if not pairs:
         raise RuntimeError(
@@ -936,7 +978,7 @@ def save_relative_pose_yaml(
     safe_cam1 = cam1_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
     safe_cam2 = cam2_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
 
-    filename = f"relative_pose_{safe_cam1}_to_{safe_cam2}.yaml"
+    filename = f"relative_pose_{safe_cam1}_to_{safe_cam2}_v3.yaml"
     out_path = out_dir / filename
 
     fs = cv2.FileStorage(str(out_path), cv2.FILE_STORAGE_WRITE)
@@ -1021,6 +1063,7 @@ if __name__ == "__main__":
         output_path=args.output,
         cam1_suffix="realsense",
         cam2_suffix="zed",
-        debug=2,
-        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0
+        debug=0,
+        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0,
+        max_imgs=28
     )

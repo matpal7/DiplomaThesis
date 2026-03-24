@@ -373,6 +373,118 @@ def show_zed_image():
         else:
             print("No image captured")
 
+def read_realsense_frame(
+    frame_size_realsense_rgb=(1280, 720),
+    frame_size_realsense_depth=(1280, 720),
+):
+    pipeline = rs.pipeline()
+    config = rs.config()
+
+    config.enable_stream(
+        rs.stream.color,
+        frame_size_realsense_rgb[0],
+        frame_size_realsense_rgb[1],
+        rs.format.bgr8,
+        30,
+    )
+    config.enable_stream(
+        rs.stream.depth,
+        frame_size_realsense_depth[0],
+        frame_size_realsense_depth[1],
+        rs.format.z16,
+        30,
+    )
+
+    profile = pipeline.start(config)
+    depth_sensor = profile.get_device().first_depth_sensor()
+    depth_scale = depth_sensor.get_depth_scale()
+    print("Depth scale:", depth_scale)
+
+    align = rs.align(rs.stream.color)
+
+    try:
+        for _ in range(10):
+            pipeline.wait_for_frames()
+
+        frames = pipeline.wait_for_frames()
+        frames = align.process(frames)
+
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame()
+
+        if not color_frame or not depth_frame:
+            return None, None, depth_scale
+
+        img_color = np.asanyarray(color_frame.get_data())
+        depth_raw = np.asanyarray(depth_frame.get_data())
+        depth_m = depth_raw.astype(np.float32) * depth_scale
+
+        return img_color, depth_m, depth_scale
+
+    finally:
+        pipeline.stop()
+def show_realsense_image_live(
+    frame_size_realsense_rgb=(1280, 720),
+    frame_size_realsense_depth=(1280, 720),
+    show_depth=False,
+):
+    pipeline = rs.pipeline()
+    config = rs.config()
+
+    config.enable_stream(
+        rs.stream.color,
+        frame_size_realsense_rgb[0],
+        frame_size_realsense_rgb[1],
+        rs.format.bgr8,
+        30,
+    )
+    config.enable_stream(
+        rs.stream.depth,
+        frame_size_realsense_depth[0],
+        frame_size_realsense_depth[1],
+        rs.format.z16,
+        30,
+    )
+
+    profile = pipeline.start(config)
+    depth_sensor = profile.get_device().first_depth_sensor()
+    depth_scale = depth_sensor.get_depth_scale()
+    print("Depth scale:", depth_scale)
+
+    align = rs.align(rs.stream.color)
+
+    try:
+        for _ in range(10):
+            pipeline.wait_for_frames()
+
+        while True:
+            frames = pipeline.wait_for_frames()
+            frames = align.process(frames)
+
+            color_frame = frames.get_color_frame()
+            depth_frame = frames.get_depth_frame()
+
+            if not color_frame or not depth_frame:
+                print("Failed to capture RealSense frame")
+                continue
+
+            img_color = np.asanyarray(color_frame.get_data())
+            depth_raw = np.asanyarray(depth_frame.get_data())
+            depth_m = depth_raw.astype(np.float32) * depth_scale
+
+            cv2.imshow("RealSense RGB", img_color)
+
+            if show_depth:
+                depth_vis = colorize_depth(depth_m, cv2.COLORMAP_TURBO)
+                cv2.imshow("RealSense Depth", depth_vis)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC
+                break
+
+    finally:
+        pipeline.stop()
+        cv2.destroyAllWindows()
 
 def save_cameras_on_click(
         camara_index_left,
@@ -567,8 +679,8 @@ def save_cameras_on_click(
 
         row1 = cv2.hconcat([top_left, top_right])
 
-        concat_rows = [row1]
-        # concat_rows = []
+        # concat_rows = [row1]
+        concat_rows = []
         if use_realsense:
             row2 = cv2.hconcat([mid_left, mid_right])
             concat_rows.append(row2)
@@ -631,15 +743,15 @@ if __name__ == '__main__':
     depth_dir = os.path.join(dataset_dir, 'stereo_4k_relative_pose')
 
     out_dir = parent_dir / "out" / "cameras_parameters"
-    calib_dict = load_dict(out_dir / "calib_data.npy")
+    # calib_dict = load_dict(out_dir / "calib_data.npy")
 
-    save_cameras_on_click(3,3, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict,
+    save_cameras_on_click(3,3, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=None,
                           squares_horizontally=6,
                           squares_vertically=8,
                           squares_length=44.0,
                           marker_length=30.0
                             )
 
-    # #show_undistored(depth_dir + "/rgb", calib_dir)
-
+    # #show_undistor   ed(depth_dir + "/rgb", calib_dir)
+    # show_realsense_image_live()
     # show_zed_image()

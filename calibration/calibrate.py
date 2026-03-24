@@ -304,9 +304,9 @@ if __name__ == '__main__':
     # calib_dict = load_dict(out_dir / "calib_data.npy")
 
 
-    calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=44.0, max_imgs=170, chessboard_x=7,
+    calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=44.0, max_imgs=28, chessboard_x=7,
                             chessboard_y=5, debug=debug)
-    calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=44.0, max_imgs=170, chessboard_x=7,
+    calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=44.0, max_imgs=28, chessboard_x=7,
                             chessboard_y=5, debug=debug)
 
     # left_dict = calibrate_mono(calib_imgs_dir, camera_side="left", chessboard_dim=30.0,

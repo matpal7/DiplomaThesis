@@ -850,7 +850,7 @@ def save_relative_pose_yaml(
     safe_cam1 = cam1_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
     safe_cam2 = cam2_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
 
-    filename = f"relative_pose_{safe_cam1}_to_{safe_cam2}.yaml"
+    filename = f"relative_pose_{safe_cam1}_to_{safe_cam2}_v2.yaml"
     out_path = out_dir / filename
 
     fs = cv2.FileStorage(str(out_path), cv2.FILE_STORAGE_WRITE)
@@ -927,13 +927,12 @@ if __name__ == "__main__":
     args.cam2_calib = cam2_calib
     args.output = out_dir
     estimate_relative_pose(
-
         image_dir=args.image_dir,
         cam1_calib=args.cam1_calib,
         cam2_calib=args.cam2_calib,
         output_path=args.output,
         cam1_suffix="realsense",
         cam2_suffix="zed",
-        debug=2,
-        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0
+        debug=0,
+        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0,
     )

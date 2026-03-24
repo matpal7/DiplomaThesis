@@ -12,7 +12,7 @@ SQUARES_HORIZONTALLY = 5
 SQUARES_VERTICALLY = 7
 SQUARE_LENGTH = 0.054
 MARKER_LENGTH = 0.037
-TRESHOLD_CORNERS = 12
+TRESHOLD_CORNERS = 20
 
 def create_charuco_board(squares_horizontally=6, squares_vertically=8, squares_length=32.0, marker_length=22.0):
     aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
@@ -84,7 +84,7 @@ def detect_charuco_in_image_live(img, board, aruco_detector, undistort_fn=None, 
         img = undistort_fn(img)
 
     vis_img = img.copy()
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
     marker_corners, marker_ids, _ = aruco_detector.detectMarkers(gray)
     detected_corner_count = 0
@@ -145,7 +145,7 @@ def detect_charuco_in_image_live(img, board, aruco_detector, undistort_fn=None, 
             cv2.LINE_AA
         )
 
-        return vis_img
+    return vis_img
 
 def collect_charuco_detections(image_paths, board, aruco_detector, undistored_l=None):
     all_charuco_corners = []
