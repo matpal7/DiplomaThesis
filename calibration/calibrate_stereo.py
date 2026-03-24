@@ -185,10 +185,11 @@ def parse_args():
 
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parent.parent
-    dataset_dir = parent_dir / "dataset_11032026"
+    date = "11032026"
+    dataset_dir = parent_dir / f"dataset_{date}"
     calib_imgs_dir = dataset_dir / "stereo_4k_calibration" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    out_dir = parent_dir / "out" / "cameras_parameters_11032026"
+    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
     debug = 0
 
 

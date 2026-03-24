@@ -8,6 +8,7 @@ import pyrealsense2 as rs
 import cv2
 import pyzed.sl as sl
 
+from calibration.ChArUco.charuco_detection import create_charuco_board, detect_charuco_in_image_live
 from utils import load_dict
 from calibration.image import get_undistort_functions
 from visualize_depth import colorize_depth
@@ -383,13 +384,22 @@ def save_cameras_on_click(
         frame_size_zed=FRAME_SIZE_ZED,
         save_dir="dataset_default",
         use_realsense=True,
-        use_zed=True):
+        use_zed=True,
+        squares_horizontally=6,
+        squares_vertically=8,
+        squares_length=32.0,
+        marker_length=22.0
+):
 
     """
     SPACE – capture new frame and show it
     S     – save currently displayed frame
     ESC/Q – exit
     """
+
+    _, board, detector = create_charuco_board(squares_horizontally=squares_horizontally,
+                                              squares_vertically=squares_vertically, squares_length=squares_length,
+                                              marker_length=marker_length)
 
     frame_size_display = (480, 270)
 
@@ -474,6 +484,7 @@ def save_cameras_on_click(
             img_r = undistort_r(img_r)
 
         img_realsense = None
+        img_realsense_vis = None
         depth_meters_realsense = None
         depth_realsense_colored = None
 
@@ -489,11 +500,13 @@ def save_cameras_on_click(
                 return False
 
             img_realsense = np.asanyarray(color_frame.get_data())
+            img_realsense_vis = detect_charuco_in_image_live(img_realsense.copy(), board, detector)
             depth_image = np.asanyarray(depth_frame.get_data())
             depth_meters_realsense = depth_image.astype(np.float32) * depth_scale
             depth_realsense_colored = colorize_depth(depth_meters_realsense, cv2.COLORMAP_TURBO)
 
         img_zed = None
+        img_zed_vis = None
         depth_zed = None
         depth_zed_colored = None
 
@@ -510,6 +523,7 @@ def save_cameras_on_click(
 
             img_zed = zed_img_mat.get_data()
             img_zed = cv2.cvtColor(img_zed, cv2.COLOR_BGRA2BGR)
+            img_zed_vis = detect_charuco_in_image_live(img_zed.copy(), board, detector)
 
             depth_zed = zed_depth_mat.get_data().copy().astype(np.float32)
             depth_zed_colored = colorize_depth(depth_zed, cv2.COLORMAP_TURBO)
@@ -519,9 +533,11 @@ def save_cameras_on_click(
         last["img_l_disp"] = img_l
         last["img_r_disp"] = img_r
         last["img_realsense"] = img_realsense
+        last["img_realsense_vis"] = img_realsense_vis
         last["depth_realsense"] = depth_meters_realsense
         last["depth_realsense_colored"] = depth_realsense_colored
         last["img_zed"] = img_zed
+        last["img_zed_vis"] = img_zed_vis
         last["depth_zed"] = depth_zed
         last["depth_zed_colored"] = depth_zed_colored
         return True
@@ -535,14 +551,14 @@ def save_cameras_on_click(
         top_left = _make_labeled_tile(last["img_l_disp"], "Stereo Left", frame_size_display)
         top_right = _make_labeled_tile(last["img_r_disp"], "Stereo Right", frame_size_display)
 
-        mid_left = _make_labeled_tile(last["img_realsense"], "RealSense RGB", frame_size_display)
+        mid_left = _make_labeled_tile(last["img_realsense_vis"], "RealSense RGB", frame_size_display)
         mid_right = _make_labeled_tile(
             last["depth_realsense_colored"] if use_realsense else None,
             "RealSense Depth",
             frame_size_display
         )
 
-        bottom_left = _make_labeled_tile(last["img_zed"], "ZED RGB", frame_size_display)
+        bottom_left = _make_labeled_tile(last["img_zed_vis"], "ZED RGB", frame_size_display)
         bottom_right = _make_labeled_tile(
             last["depth_zed_colored"] if use_zed else None,
             "ZED Depth",

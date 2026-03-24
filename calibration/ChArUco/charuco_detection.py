@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import cv2
 import numpy as np
+from sympy.codegen.ast import continue_
 
 from calibration.image import get_undistort_functions
 from utils import get_l_r_image_fnames, load_dict, save_dict
@@ -51,6 +52,100 @@ def detect_charuco_in_image(img_path, board, aruco_detector, undistored_l=None):
 
     return charuco_corners, charuco_ids, gray.shape[::-1]
 
+def detect_charuco_in_image_live(img, board, aruco_detector, undistort_fn=None, min_corners=TRESHOLD_CORNERS):
+    """
+    Detect ChArUco board in an already loaded image.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        Input BGR image
+    board : cv2.aruco.CharucoBoard
+        ChArUco board object
+    aruco_detector : cv2.aruco.ArucoDetector
+        Configured ArUco detector
+    undistort_fn : callable | None
+        Optional image undistortion function
+    min_corners : int
+        Minimum number of interpolated ChArUco corners required
+
+    Returns
+    -------
+    charuco_corners : np.ndarray | None
+    charuco_ids : np.ndarray | None
+    vis_img : np.ndarray
+        Visualization with detected markers/corners drawn
+    """
+
+    if img is None:
+        raise ValueError("Input image is None")
+
+    if undistort_fn is not None:
+        img = undistort_fn(img)
+
+    vis_img = img.copy()
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    marker_corners, marker_ids, _ = aruco_detector.detectMarkers(gray)
+    detected_corner_count = 0
+
+
+    if marker_ids is not None and len(marker_ids) > 0:
+        # cv2.aruco.drawDetectedMarkers(vis_img, marker_corners, marker_ids)
+
+        retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(
+            marker_corners,
+            marker_ids,
+            gray,
+            board
+        )
+
+        if retval is not None and charuco_ids is not None:
+            detected_corner_count = len(charuco_ids)
+
+        if retval is not None and retval >= min_corners and charuco_ids is not None:
+            # vis_img = cv2.aruco.drawDetectedCornersCharuco(
+            #     vis_img,
+            #     charuco_corners,
+            #     None, #charuco_ids,
+            #     cornerColor=(0, 0, 255)
+            # )
+            for pt in charuco_corners.reshape(-1, 2):
+                x, y = int(round(pt[0])), int(round(pt[1]))
+                cv2.circle(vis_img, (x, y), 8, (0, 0, 255), 6)  # fill
+                # cv2.circle(vis_img, (x, y), 29, (255, 255, 255), 2)
+
+        text = f"Corners: {detected_corner_count}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1.5
+        thickness = 2
+
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+
+        margin = 15
+        x = vis_img.shape[1] - text_w - margin
+        y = margin + text_h
+
+        cv2.rectangle(
+            vis_img,
+            (x - 8, y - text_h - 8),
+            (x + text_w + 8, y + baseline + 8),
+            (0, 0, 0),
+            -1
+        )
+
+        cv2.putText(
+            vis_img,
+            text,
+            (x, y),
+            font,
+            font_scale,
+            (0, 255, 255),
+            thickness,
+            cv2.LINE_AA
+        )
+
+        return vis_img
 
 def collect_charuco_detections(image_paths, board, aruco_detector, undistored_l=None):
     all_charuco_corners = []
