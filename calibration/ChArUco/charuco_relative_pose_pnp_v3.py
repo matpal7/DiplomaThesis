@@ -21,6 +21,9 @@ MAX_REPROJ_ERR = 2.0
 MIN_COMMON_CORNERS = 20
 MIN_PAIR_WEIGHT = 0.25
 MAX_PAIR_WEIGHT = 4.0
+PNP_RANSAC_REPROJ_ERR = 2.0
+PNP_RANSAC_CONFIDENCE = 0.995
+MIN_PNP_INLIERS = 12
 
 
 @dataclass
@@ -666,6 +669,93 @@ def _compute_pair_transform(rvec_1, tvec_1, rvec_2, tvec_2):
     T_cam2_board = rt_to_T(rvec_2, tvec_2)
     return T_cam2_board @ np.linalg.inv(T_cam1_board)
 
+
+def _solve_pnp_robust(
+    obj_pts: np.ndarray,
+    img_pts: np.ndarray,
+    K: np.ndarray,
+    dist: np.ndarray,
+) -> tuple[bool, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    if obj_pts.shape[0] < 4:
+        return False, None, None, None
+
+    ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+        objectPoints=obj_pts,
+        imagePoints=img_pts,
+        cameraMatrix=K,
+        distCoeffs=dist,
+        useExtrinsicGuess=False,
+        iterationsCount=200,
+        reprojectionError=PNP_RANSAC_REPROJ_ERR,
+        confidence=PNP_RANSAC_CONFIDENCE,
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )
+
+    if not ok or inliers is None or len(inliers) < MIN_PNP_INLIERS:
+        return False, None, None, inliers
+
+    inlier_idx = inliers.reshape(-1)
+    obj_in = obj_pts[inlier_idx]
+    img_in = img_pts[inlier_idx]
+
+    rvec_refined, tvec_refined = cv2.solvePnPRefineLM(
+        objectPoints=obj_in,
+        imagePoints=img_in,
+        cameraMatrix=K,
+        distCoeffs=dist,
+        rvec=rvec,
+        tvec=tvec,
+    )
+
+    return True, rvec_refined, tvec_refined, inliers
+
+
+def _pair_joint_rms(
+    sample: PoseSample,
+    T_cam2_cam1: np.ndarray,
+    K_cam1: np.ndarray,
+    dist_cam1: np.ndarray,
+    K_cam2: np.ndarray,
+    dist_cam2: np.ndarray,
+) -> float:
+    residual_blocks = []
+
+    rvec_1 = sample.rvec_cam1_board
+    tvec_1 = sample.tvec_cam1_board
+    proj_1, _ = cv2.projectPoints(sample.obj_pts_cam1, rvec_1, tvec_1, K_cam1, dist_cam1)
+    residual_blocks.append((proj_1.reshape(-1, 2) - sample.img_pts_cam1.reshape(-1, 2)).reshape(-1))
+
+    T_cam1_board = rt_to_T(rvec_1, tvec_1)
+    T_cam2_board = T_cam2_cam1 @ T_cam1_board
+    rvec_2, tvec_2 = T_to_rt(T_cam2_board)
+    proj_2, _ = cv2.projectPoints(sample.obj_pts_cam2, rvec_2, tvec_2, K_cam2, dist_cam2)
+    residual_blocks.append((proj_2.reshape(-1, 2) - sample.img_pts_cam2.reshape(-1, 2)).reshape(-1))
+
+    residuals = np.concatenate(residual_blocks).astype(np.float64)
+    return float(np.sqrt(np.mean(residuals ** 2)))
+
+
+def _reject_high_rms_pairs(
+    samples: list[PoseSample],
+    T_cam2_cam1: np.ndarray,
+    K_cam1: np.ndarray,
+    dist_cam1: np.ndarray,
+    K_cam2: np.ndarray,
+    dist_cam2: np.ndarray,
+    sigma_mult: float = 2.0,
+    min_threshold: float = 0.35,
+) -> tuple[list[PoseSample], np.ndarray, float]:
+    pair_rms = np.array(
+        [
+            _pair_joint_rms(sample, T_cam2_cam1, K_cam1, dist_cam1, K_cam2, dist_cam2)
+            for sample in samples
+        ],
+        dtype=np.float64,
+    )
+    rms_thr = _median_mad_threshold(pair_rms, sigma_mult=sigma_mult, min_threshold=min_threshold)
+    inliers = [sample for sample, v in zip(samples, pair_rms) if v <= rms_thr]
+    return inliers, pair_rms, rms_thr
+
 def _camera_suffix_from_calib_path(calib_path: Path) -> str:
     """
     Example:
@@ -706,7 +796,7 @@ def estimate_relative_pose(
     squares_length=32.0,
     marker_length=22.0,
     min_common_corners: int = MIN_COMMON_CORNERS,
-    use_pair_weights: bool = False,
+    use_pair_weights: bool = True,
     max_imgs: int = None
 
 ) -> None:
@@ -833,26 +923,26 @@ def estimate_relative_pose(
             )
             continue
 
-        ok1, rvec_1_common, tvec_1_common = cv2.solvePnP(
-            obj_pts_common,
-            img_pts_1,
-            K_cam1,
-            dist_cam1,
-            flags=cv2.SOLVEPNP_ITERATIVE,
+        ok1, rvec_1_common, tvec_1_common, inliers1 = _solve_pnp_robust(
+            obj_pts_common, img_pts_1, K_cam1, dist_cam1
         )
-        ok2, rvec_2_common, tvec_2_common = cv2.solvePnP(
-            obj_pts_common,
-            img_pts_2,
-            K_cam2,
-            dist_cam2,
-            flags=cv2.SOLVEPNP_ITERATIVE,
+        ok2, rvec_2_common, tvec_2_common, inliers2 = _solve_pnp_robust(
+            obj_pts_common, img_pts_2, K_cam2, dist_cam2
         )
         if not ok1 or not ok2:
             print(f"{pair_name}: rejected (solvePnP failed on common corners)")
             continue
 
-        obj_pts_1 = obj_pts_common.copy()
-        obj_pts_2 = obj_pts_common.copy()
+        inlier_ids = np.intersect1d(inliers1.reshape(-1), inliers2.reshape(-1))
+        if inlier_ids.size < MIN_PNP_INLIERS:
+            print(
+                f"{pair_name}: rejected (PnP inlier overlap too small: {inlier_ids.size})"
+            )
+            continue
+        obj_pts_1 = obj_pts_common[inlier_ids].copy()
+        obj_pts_2 = obj_pts_common[inlier_ids].copy()
+        img_pts_1 = img_pts_1[inlier_ids].copy()
+        img_pts_2 = img_pts_2[inlier_ids].copy()
 
         T_cam2_cam1 = _compute_pair_transform(rvec_1_common, tvec_1_common, rvec_2_common, tvec_2_common)
         pair_weight = _compute_pair_weight(num_common, err_1, err_2) if use_pair_weights else 1.0
@@ -916,6 +1006,32 @@ def estimate_relative_pose(
         dist_cam2=dist_cam2,
         T_init=T_init,
     )
+
+    inliers_rms, pair_rms, pair_rms_thr = _reject_high_rms_pairs(
+        samples=inliers,
+        T_cam2_cam1=T_opt,
+        K_cam1=K_cam1,
+        dist_cam1=dist_cam1,
+        K_cam2=K_cam2,
+        dist_cam2=dist_cam2,
+    )
+    print(
+        f"Pair RMS rejection threshold: {pair_rms_thr:.3f}px, "
+        f"kept {len(inliers_rms)} / {len(inliers)}"
+    )
+    if len(inliers_rms) >= max(6, len(inliers) // 2):
+        T_init_refined = compute_reference_transform(inliers_rms)
+        T_opt, R_opt, t_opt, reproj_rms = optimize_global_camera_pose(
+            samples=inliers_rms,
+            K_cam1=K_cam1,
+            dist_cam1=dist_cam1,
+            K_cam2=K_cam2,
+            dist_cam2=dist_cam2,
+            T_init=T_init_refined,
+        )
+        inliers = inliers_rms
+    else:
+        print("Skipping second optimization pass (too few pair-RMS inliers).")
     baseline = float(np.linalg.norm(t_opt))
 
     print("BASELINE:", baseline)
