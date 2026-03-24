@@ -568,7 +568,7 @@ def save_cameras_on_click(
         row1 = cv2.hconcat([top_left, top_right])
 
         concat_rows = [row1]
-        concat_rows = []
+        # concat_rows = []
         if use_realsense:
             row2 = cv2.hconcat([mid_left, mid_right])
             concat_rows.append(row2)
@@ -603,11 +603,11 @@ def save_cameras_on_click(
 
             if use_realsense and last["img_realsense"] is not None and last["depth_realsense"] is not None:
                 cv2.imwrite(os.path.join(rgb_dir, f"{num}_realsense.png"), last["img_realsense"])
-                # np.save(os.path.join(depth_dir, f"{num}_realsense_depth.npy"), last["depth_realsense"])
+                np.save(os.path.join(depth_dir, f"{num}_realsense_depth.npy"), last["depth_realsense"])
 
             if use_zed and last["img_zed"] is not None and last["depth_zed"] is not None:
                 cv2.imwrite(os.path.join(rgb_dir, f"{num}_zed.png"), last["img_zed"])
-                # np.save(os.path.join(depth_dir, f"{num}_zed_depth.npy"), last["depth_zed"])
+                np.save(os.path.join(depth_dir, f"{num}_zed_depth.npy"), last["depth_zed"])
 
             print(f"Saved displayed capture {num}")
             num += 1
@@ -627,13 +627,18 @@ if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parent.parent
 
     # calib_dir = load_dict(out_dir + "/calib_data.npy")
-    dataset_dir = os.path.join(parent_dir, 'dataset_23032026')
+    dataset_dir = os.path.join(parent_dir, 'dataset_24032026')
     depth_dir = os.path.join(dataset_dir, 'stereo_4k_relative_pose')
 
     out_dir = parent_dir / "out" / "cameras_parameters"
     calib_dict = load_dict(out_dir / "calib_data.npy")
 
-    save_cameras_on_click(3,3, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict)
+    save_cameras_on_click(3,3, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict,
+                          squares_horizontally=6,
+                          squares_vertically=8,
+                          squares_length=44.0,
+                          marker_length=30.0
+                            )
 
     # #show_undistored(depth_dir + "/rgb", calib_dir)
 

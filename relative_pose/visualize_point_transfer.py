@@ -7,6 +7,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from calibration.ChArUco.charuco_relative_pose_pnp import _get_undistort_function
+from calibration.image import load_calib_data
+
+
 def _read_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray]:
     fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
     if not fs.isOpened():
@@ -174,7 +178,7 @@ def _interactive_transfer_points(
 
             X1 = _pixel_to_cam_point(u, v, depth_m, K1, D1)
             X2 = (T_cam2_cam1 @ np.append(X1, 1.0))[:3]
-
+            # X2 = (np.linalg.inv(T_cam2_cam1) @ np.append(X1, 1.0))[:3]
             if X2[2] <= 0:
                 print(f"Point behind camera 2, skipped. z={X2[2]:.4f}")
                 return
@@ -581,9 +585,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Interactive point transfer between calibrated cameras.')
     parser.add_argument('--mode', choices=['cam1_to_cam2', 'cam2_to_cam1_via_cam1_depth', 'multi_target_from_cam1'], default='cam1_to_cam2')
 
-    parser.add_argument('--image-cam1', type=Path, required=True, help='Image from source camera (cam1)')
+    parser.add_argument('--image-cam1', type=Path, required=False, help='Image from source camera (cam1)')
     parser.add_argument('--image-cam2', type=Path, required=False, help='Image from target camera (cam2)')
-    parser.add_argument('--cam1-calib', type=Path, required=True, help='YAML intrinsics for source camera (K,D)')
+    parser.add_argument('--cam1-calib', type=Path, required=False, help='YAML intrinsics for source camera (K,D)')
     parser.add_argument('--cam2-calib', type=Path, required=False, help='YAML intrinsics for target camera (K,D)')
     parser.add_argument('--relative-pose', type=Path, required=False, help='Relative pose file (.json/.yaml) with T_cam2_cam1')
 
@@ -593,9 +597,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--target-names', nargs='*', default=None, help='Display names for targets')
 
     parser.add_argument('--depth-map-cam1', type=Path, default=None, help='.npy depth map for camera 1')
-    parser.add_argument('--depth-scale', type=float, default=0.001)
+    parser.add_argument('--depth-scale', type=float, default=1.0)
     parser.add_argument('--depth', type=float, default=None, help='Fallback constant depth (cam1_to_cam2 only)')
-    parser.add_argument('--circle-radius', type=int, default=12)
+    parser.add_argument('--circle-radius', type=int, default=8)
     parser.add_argument('--save', type=Path, default=None)
     parser.add_argument('--invert-relative-pose', action='store_true')
     parser.add_argument('--source-name', default='cam1')
@@ -609,68 +613,45 @@ def main() -> None:
 
     parent_dir = Path(__file__).resolve().parent.parent
 
-    dataset_dir = parent_dir / "dataset_11032026"
+    date = "24032026"
+
+    dataset_dir = parent_dir / f"dataset_{date}"
     depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
 
-    args.image_cam1 = depth_dir / "1_realsense.png"
-    args.image_cam2 = depth_dir / "1_left.png"
+    args.image_cam1 = depth_dir / "22_realsense.png"
+    args.image_cam2 = depth_dir / "22_zed.png"
 
-    out_dir = parent_dir / "out" / "cameras_parameters"
+    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
 
-    calib_dict_realsense = out_dir / "realsense_calibration.yaml"
-    calib_dict_zed = out_dir / "zed_calibration.yaml"
+    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
+    calib_dict_zed = out_dir / "zed_calibration_1280x720.yaml"
     calib_dict_NICO_left = out_dir / "left_NICO.yaml"
     calib_dict_stereo = out_dir / "calib_data.npy"
 
 
-    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left.yaml"
-    args.cam1_calib = calib_dict_realsense
-    args.cam2_calib = calib_dict_stereo
-    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "0_realsense_depth.npy"
 
-    args.mode == 'multi_target_from_cam1'
+    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_zed.yaml"
+    args.cam1_calib = calib_dict_realsense
+    args.cam2_calib = calib_dict_zed
+    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "22_realsense_depth.npy"
+
+    args.mode == 'cam1_to_cam2'
+
+    suffix1 = "realsense"
+    suffix2 = "zed"
+
+    calib_dict_cam1 = load_calib_data(args.cam1_calib, type=suffix1)
+    calib_dict_cam2 = load_calib_data(args.cam2_calib, type=suffix2)
+
+    undistort_1 = _get_undistort_function(calib_dict_cam1, suffix1)
+    undistort_2 = _get_undistort_function(calib_dict_cam2, suffix2)
 
     img1 = cv2.imread(str(args.image_cam1))
     if img1 is None:
         raise FileNotFoundError(f'Cannot read camera 1 image: {args.image_cam1}')
 
+    img1 = undistort_1(img1)
     K1, D1 = _read_camera_calibration(args.cam1_calib)
-
-    if args.mode == 'multi_target_from_cam1':
-        if args.depth_map_cam1 is None:
-            raise ValueError('Mode multi_target_from_cam1 requires --depth-map-cam1')
-        if not args.target_images or not args.target_calibs or not args.target_relative_poses:
-            raise ValueError('Provide --target-images, --target-calibs and --target-relative-poses for multi-target mode.')
-        if not (len(args.target_images) == len(args.target_calibs) == len(args.target_relative_poses)):
-            raise ValueError('target-images, target-calibs and target-relative-poses must have the same count.')
-
-        target_names = args.target_names or [f'target_{i}' for i in range(len(args.target_images))]
-        if len(target_names) != len(args.target_images):
-            raise ValueError('target-names count must match target-images count.')
-
-        targets = []
-        for image_path, calib_path, pose_path, name in zip(args.target_images, args.target_calibs, args.target_relative_poses, target_names):
-            img_t = cv2.imread(str(image_path))
-            if img_t is None:
-                raise FileNotFoundError(f'Cannot read target image: {image_path}')
-            K_t, D_t = _read_camera_calibration(calib_path)
-            T_t_s = _read_relative_pose(pose_path)
-            if args.invert_relative_pose:
-                T_t_s = np.linalg.inv(T_t_s)
-            targets.append({'name': name, 'image': img_t, 'K': K_t, 'D': D_t, 'T_target_source': T_t_s})
-
-        depth_cam1 = np.load(args.depth_map_cam1)
-        _interactive_transfer_points_multi_targets(
-            source_img=img1,
-            source_depth=depth_cam1,
-            K_source=K1,
-            D_source=D1,
-            targets=targets,
-            depth_scale=args.depth_scale,
-            circle_radius=args.circle_radius,
-            save_path=args.save,
-        )
-        return
 
     if args.image_cam2 is None or args.cam2_calib is None or args.relative_pose is None:
         raise ValueError('Modes cam1_to_cam2/cam2_to_cam1_via_cam1_depth require --image-cam2 --cam2-calib --relative-pose')
@@ -678,9 +659,15 @@ def main() -> None:
     img2 = cv2.imread(str(args.image_cam2))
     if img2 is None:
         raise FileNotFoundError(f'Cannot read camera 2 image: {args.image_cam2}')
+    img2 = undistort_2(img2)
 
     K2, D2 = _read_camera_calibration(args.cam2_calib)
     T_cam2_cam1 = _read_relative_pose(args.relative_pose)
+    T_cam2_cam1[:3, 3] /= 1000.0
+
+    print(T_cam2_cam1)
+    print(np.linalg.inv(T_cam2_cam1))
+
     if args.invert_relative_pose:
         T_cam2_cam1 = np.linalg.inv(T_cam2_cam1)
 

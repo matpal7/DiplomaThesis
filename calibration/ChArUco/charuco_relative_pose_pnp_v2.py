@@ -639,8 +639,8 @@ def estimate_relative_pose(
     undistort_1 = _get_undistort_function(calib_dict_cam1, cam1_suffix)
     undistort_2 = _get_undistort_function(calib_dict_cam2, cam2_suffix)
 
-    undistort_1 = None
-    undistort_2 = None
+    # undistort_1 = None
+    # undistort_2 = None
 
     print(f"Camera 1: {cam1_suffix}")
     print(f"Camera 2: {cam2_suffix}")
@@ -905,7 +905,7 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     parent_dir = Path(__file__).resolve().parent.parent.parent
-    date = "23032026"
+    date = "24032026"
     dataset_dir = parent_dir / f'dataset_{date}'
     depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
     out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
@@ -927,6 +927,7 @@ if __name__ == "__main__":
     args.cam2_calib = cam2_calib
     args.output = out_dir
     estimate_relative_pose(
+
         image_dir=args.image_dir,
         cam1_calib=args.cam1_calib,
         cam2_calib=args.cam2_calib,
@@ -934,5 +935,5 @@ if __name__ == "__main__":
         cam1_suffix="realsense",
         cam2_suffix="zed",
         debug=2,
-        squares_horizontally=6, squares_vertically=8, squares_length=32.0, marker_length=22.0
+        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0
     )
