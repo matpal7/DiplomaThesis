@@ -4,16 +4,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from calibration.image import load_l_r_images_undistorted, load_rgbd_images, get_undistort_functions, \
+from code.calibration.image import load_l_r_images_undistorted, load_rgbd_images, get_undistort_functions, \
     load_l_r_images_rectified
-from utils import load_dict
+from code.utils import load_dict
 
 frameSize = (1280, 720)
 
 
-def show_undistorted_images(calib_dict, img_dir, correct_horizon=False, scale=4, max_imgs=None):
+def show_undistorted_images(calib_dict, img_dir, scale=4, max_imgs=None):
     imgs_l, imgs_r = load_l_r_images_undistorted(
-        calib_dict, img_dir, max_imgs=max_imgs, correct_horizon=False
+        calib_dict, img_dir, max_imgs=max_imgs
     )
     print(len(imgs_l))
     imgs_rgb = load_rgbd_images(img_dir, max_imgs=max_imgs)
@@ -65,7 +65,7 @@ def show_undistorted_images(calib_dict, img_dir, correct_horizon=False, scale=4,
 
 def undistorted_image_left(img, calib_dict):
     calib_dict = load_dict(calib_dict)
-    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=False)
+    undistort_l, undistort_r = get_undistort_functions(calib_dict)
     img = undistort_l(img)
     return img
 

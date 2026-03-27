@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 from matplotlib import pyplot as plt
 
-from calibration.image import load_rgb_depth_pairs
+from code.calibration.image import load_rgb_depth_pairs
 
 
 def visualize_depth(

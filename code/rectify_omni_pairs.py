@@ -49,6 +49,8 @@ def _draw_epi_lines(img: np.ndarray, step: int = 50) -> np.ndarray:
     vis = img.copy()
     for y in range(0, vis.shape[0], step):
         cv2.line(vis, (0, y), (vis.shape[1] - 1, y), (0, 255, 0), 1, cv2.LINE_AA)
+    for x in range(0, vis.shape[1], step):
+        cv2.line(vis, (x, 0), (x, vis.shape[0] - 1), (0, 255, 255), 1, cv2.LINE_AA)
     return vis
 
 
@@ -125,7 +127,7 @@ def main() -> None:
     calib = _load_calib_dict(args.calib_dict)
     pairs = _find_lr_pairs(args.image_dir, args.left_suffix, args.right_suffix)
 
-    undistort_l, undistort_r = get_undistort_functions(calib, correct_horizon=False)
+    undistort_l, undistort_r = get_undistort_functions(calib, stereo=True)
 
 
     K_l = np.asarray(calib["K_l"], dtype=np.float64)
@@ -160,28 +162,72 @@ def main() -> None:
         R=R_lr,
         T=tvec,
         flags=cv2.CALIB_ZERO_DISPARITY,
-        alpha=0.0,
+        alpha=1.0,
     )
+
+    R1_inv = R1.T  # inverse of rotation
+    R2_fixed = R2 @ R1_inv
+
+    P2_fixed = P2.copy()
+    P2_fixed[:3, :3] = P2[:3, :3] @ R1.T
 
     map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(
         K_l,
         D_l,
         xi_l,
-        R1,
-        P1[:3, :3],
-        img_size,
-        cv2.CV_16SC2,
-        cv2.omnidir.RECTIFY_PERSPECTIVE,
+        R=np.eye(3, dtype=np.float64),  # 🔥 keep left unchanged
+        P=K_l,  # keep intrinsics
+        size=img_size,
+        m1type=cv2.CV_16SC2,
+        flags=cv2.omnidir.RECTIFY_PERSPECTIVE,
     )
-    map1_r, map2_r = cv2.omnidir.initUndistortRectifyMap(
-        K_r,
-        D_r,
-        xi_r,
-        R2,
-        P2[:3, :3],
-        img_size,
-        cv2.CV_16SC2,
-        cv2.omnidir.RECTIFY_PERSPECTIVE,
+
+    # map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(K_l, D_l, xi_l, R1, P1[:3, :3], img_size, cv2.CV_16SC2,
+    #                                                      cv2.omnidir.RECTIFY_PERSPECTIVE, )
+
+    # map1_r, map2_r = cv2.initUndistortRectifyMap(
+    #     K_r,
+    #     D_r,
+    #     R=R2_fixed, #R2,  # 🔥 apply rectification rotation
+    #     P=P2_fixed[:3, :3],  # projection from stereoRectify
+    #     size=img_size,
+    #     m1type=cv2.CV_16SC2,
+    #     flags=cv2.omnidir.RECTIFY_PERSPECTIVE,
+    # )
+
+    R2_fixed = R2 @ R1.T  # rotation that rectifies right w.r.t original left
+
+    # Build a projection for right that keeps similar intrinsics to new_K_r
+    K2_rect = P2[:3, :3]
+    fx_scale = new_K_r[0, 0] / K2_rect[0, 0]
+    fy_scale = new_K_r[1, 1] / K2_rect[1, 1]
+    S = np.diag([fx_scale, fy_scale, 1.0])
+
+    K2_eff = S @ K2_rect
+    K2_eff[0, 2] = new_K_r[0, 2]
+    K2_eff[1, 2] = new_K_r[1, 2]
+
+    P2_fixed = K2_eff  # for initUndistortRectifyMap, we only need 3x3
+
+    # --- maps ---
+    # Left: ONLY undistort, no rectifying rotation
+    map1_l, map2_l = cv2.initUndistortRectifyMap(
+        cameraMatrix=K_l,
+        distCoeffs=D_l,
+        R=np.eye(3, dtype=np.float64),
+        newCameraMatrix=K_l,  # or new_K_l if you want
+        size=img_size,
+        m1type=cv2.CV_16SC2,
+    )
+
+    # Right: undistort + relative rectification to align with (fixed) left
+    map1_r, map2_r = cv2.initUndistortRectifyMap(
+        cameraMatrix=K_r,
+        distCoeffs=D_r,
+        R=R2_fixed,
+        newCameraMatrix=P2_fixed,  # effective rectified intrinsics
+        size=img_size,
+        m1type=cv2.CV_16SC2,
     )
 
     out_left = args.out_dir / "left"

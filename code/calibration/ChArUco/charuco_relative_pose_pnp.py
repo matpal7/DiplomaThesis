@@ -8,23 +8,16 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from scipy.optimize import least_squares
 
-from calibration.ChArUco.charuco_detection import (
+from code.calibration.ChArUco.charuco_detection import (
     TRESHOLD_CORNERS,
     create_charuco_board,
 )
-from calibration.image import get_undistort_functions, load_yaml_calibration, load_calib_data
-from utils import load_dict, save_dict
+from code.calibration.image import get_undistort_functions, load_yaml_calibration, load_calib_data, \
+    get_undistort_function_mono, numeric_key, extract_key
+from code.utils import load_dict, save_dict
 
 MAX_REPROJ_ERR = 2.0
-MIN_COMMON_CORNERS = 20
-MIN_PAIR_WEIGHT = 0.25
-MAX_PAIR_WEIGHT = 4.0
-PNP_RANSAC_REPROJ_ERR = 2.0
-PNP_RANSAC_CONFIDENCE = 0.995
-MIN_PNP_INLIERS = 12
-
 
 @dataclass
 class PoseSample:
@@ -38,8 +31,7 @@ class PoseSample:
     img_pts_cam1: np.ndarray
     obj_pts_cam2: np.ndarray
     img_pts_cam2: np.ndarray
-    weight: float = 1.0
-    num_common_corners: int = 0
+
 
 
 def load_camera_calibration(path: Path, suffix="left") -> tuple[np.ndarray, np.ndarray]:
@@ -74,14 +66,7 @@ def load_camera_calibration(path: Path, suffix="left") -> tuple[np.ndarray, np.n
         raise ValueError(f"Unsupported calibration file format: {path}")
 
 
-def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str, max_imgs: int) -> list[tuple[Path, Path, str]]:
-
-    def extract_key(p: Path) -> str:
-        return p.stem.split("_")[0]
-
-    def numeric_key(p: Path) -> int:
-        return int(extract_key(p))
-
+def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str) -> list[tuple[Path, Path, str]]:
     cam1_images = sorted(
         image_dir.glob(f"*{cam1_suffix}.png"),
         key=numeric_key
@@ -103,160 +88,15 @@ def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str, max_im
 
         pairs.append((cam1, cam2, key))
 
-    if max_imgs is not None:
-        pairs = pairs[:max_imgs]
-
     return pairs
 
 def find_images(image_dir: Path, cam1_suffix: str) -> list[Path]:
-
-    def extract_key(p: Path) -> str:
-        return p.stem.split("_")[0]
-
-    def numeric_key(p: Path) -> int:
-        return int(extract_key(p))
-
     cam1_images = sorted(
         image_dir.glob(f"*{cam1_suffix}.png"),
         key=numeric_key
     )
 
     return cam1_images
-
-def _pack_optimization_params(T_cam2_cam1: np.ndarray, samples: list[PoseSample]) -> np.ndarray:
-    rvec_global, _ = cv2.Rodrigues(T_cam2_cam1[:3, :3])
-    x = [rvec_global.reshape(3), T_cam2_cam1[:3, 3].reshape(3)]
-    for sample in samples:
-        x.append(sample.rvec_cam1_board.reshape(3))
-        x.append(sample.tvec_cam1_board.reshape(3))
-    return np.concatenate(x).astype(np.float64)
-
-
-def _unpack_optimization_params(
-    x: np.ndarray, num_samples: int
-) -> tuple[np.ndarray, np.ndarray, list[tuple[np.ndarray, np.ndarray]]]:
-    if x.size != 6 + 6 * num_samples:
-        raise ValueError(f"Unexpected optimization vector size: {x.size}")
-
-    rvec_global = x[:3].reshape(3, 1)
-    t_global = x[3:6].reshape(3, 1)
-    pair_params: list[tuple[np.ndarray, np.ndarray]] = []
-    offset = 6
-    for _ in range(num_samples):
-        rvec_i = x[offset:offset + 3].reshape(3, 1)
-        tvec_i = x[offset + 3:offset + 6].reshape(3, 1)
-        pair_params.append((rvec_i, tvec_i))
-        offset += 6
-    return rvec_global, t_global, pair_params
-
-
-def _joint_residuals(
-    x: np.ndarray,
-    samples: list[PoseSample],
-    K_cam1: np.ndarray,
-    dist_cam1: np.ndarray,
-    K_cam2: np.ndarray,
-    dist_cam2: np.ndarray,
-) -> np.ndarray:
-    rvec_global, t_global, pair_params = _unpack_optimization_params(x, len(samples))
-
-    R_global, _ = cv2.Rodrigues(rvec_global)
-    T_cam2_cam1 = np.eye(4, dtype=np.float64)
-    T_cam2_cam1[:3, :3] = R_global
-    T_cam2_cam1[:3, 3] = t_global.reshape(3)
-
-    residual_blocks: list[np.ndarray] = []
-
-    for sample, (rvec_1, tvec_1) in zip(samples, pair_params):
-        if sample.obj_pts_cam1.shape[0] > 0:
-            proj_1, _ = cv2.projectPoints(sample.obj_pts_cam1, rvec_1, tvec_1, K_cam1, dist_cam1)
-            res_1 = proj_1.reshape(-1, 2) - sample.img_pts_cam1.reshape(-1, 2)
-            weighted_res_1 = np.sqrt(sample.weight) * res_1
-            residual_blocks.append(weighted_res_1.reshape(-1))
-
-        T_cam1_board = rt_to_T(rvec_1, tvec_1)
-        T_cam2_board = T_cam2_cam1 @ T_cam1_board
-        rvec_2, tvec_2 = T_to_rt(T_cam2_board)
-
-        if sample.obj_pts_cam2.shape[0] > 0:
-            proj_2, _ = cv2.projectPoints(sample.obj_pts_cam2, rvec_2, tvec_2, K_cam2, dist_cam2)
-            res_2 = proj_2.reshape(-1, 2) - sample.img_pts_cam2.reshape(-1, 2)
-            weighted_res_2 = np.sqrt(sample.weight) * res_2
-            residual_blocks.append(weighted_res_2.reshape(-1))
-
-
-    if not residual_blocks:
-        return np.array([], dtype=np.float64)
-    return np.concatenate(residual_blocks).astype(np.float64)
-
-
-def optimize_global_camera_pose(
-    samples: list[PoseSample],
-    K_cam1: np.ndarray,
-    dist_cam1: np.ndarray,
-    K_cam2: np.ndarray,
-    dist_cam2: np.ndarray,
-    T_init: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-    x0 = _pack_optimization_params(T_init, samples)
-    result = least_squares(
-        _joint_residuals,
-        x0,
-        method="trf",
-        loss="huber",
-        f_scale=1.0,
-        args=(samples, K_cam1, dist_cam1, K_cam2, dist_cam2),
-        max_nfev=500,
-    )
-
-    rvec_global, t_global, _ = _unpack_optimization_params(result.x, len(samples))
-    R_global, _ = cv2.Rodrigues(rvec_global)
-    T_global = np.eye(4, dtype=np.float64)
-    T_global[:3, :3] = R_global
-    T_global[:3, 3] = t_global.reshape(3)
-
-    # residuals = _joint_residuals(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
-    # rms = float(np.sqrt(np.mean(residuals ** 2))) if residuals.size > 0 else float("nan")
-    raw_residuals = _joint_residuals_unweighted(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
-    rms = float(np.sqrt(np.mean(raw_residuals ** 2))) if raw_residuals.size > 0 else float("nan")
-    return T_global, R_global, t_global.reshape(3), rms
-
-def _joint_residuals_unweighted(
-    x: np.ndarray,
-    samples: list[PoseSample],
-    K_cam1: np.ndarray,
-    dist_cam1: np.ndarray,
-    K_cam2: np.ndarray,
-    dist_cam2: np.ndarray,
-) -> np.ndarray:
-    rvec_global, t_global, pair_params = _unpack_optimization_params(x, len(samples))
-
-    R_global, _ = cv2.Rodrigues(rvec_global)
-    T_cam2_cam1 = np.eye(4, dtype=np.float64)
-    T_cam2_cam1[:3, :3] = R_global
-    T_cam2_cam1[:3, 3] = t_global.reshape(3)
-
-    residual_blocks = []
-
-    for sample, (rvec_1, tvec_1) in zip(samples, pair_params):
-        if sample.obj_pts_cam1.shape[0] > 0:
-            proj_1, _ = cv2.projectPoints(sample.obj_pts_cam1, rvec_1, tvec_1, K_cam1, dist_cam1)
-            res_1 = proj_1.reshape(-1, 2) - sample.img_pts_cam1.reshape(-1, 2)
-            residual_blocks.append(res_1.reshape(-1))
-
-        T_cam1_board = rt_to_T(rvec_1, tvec_1)
-        T_cam2_board = T_cam2_cam1 @ T_cam1_board
-        rvec_2, tvec_2 = T_to_rt(T_cam2_board)
-
-        if sample.obj_pts_cam2.shape[0] > 0:
-            proj_2, _ = cv2.projectPoints(sample.obj_pts_cam2, rvec_2, tvec_2, K_cam2, dist_cam2)
-            res_2 = proj_2.reshape(-1, 2) - sample.img_pts_cam2.reshape(-1, 2)
-            residual_blocks.append(res_2.reshape(-1))
-
-    if not residual_blocks:
-        return np.array([], dtype=np.float64)
-
-    return np.concatenate(residual_blocks).astype(np.float64)
 
 def _draw_charuco_points(
     image: np.ndarray,
@@ -282,7 +122,7 @@ def _draw_charuco_points(
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
                 (0, 255, 0),
-                29,
+                1,
                 cv2.LINE_AA,
             )
 
@@ -487,7 +327,7 @@ def pose_from_charuco(
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
                 (0, 0, 255),
-                28,
+                2,
                 cv2.LINE_AA,
             )
             show_debug_window(window_name or "Charuco debug", vis, debug)
@@ -632,129 +472,11 @@ def reject_outliers(
     ]
     return inliers, trans_dev, rot_dev, trans_thr, rot_thr
 
-def _extract_common_charuco_points(
-    board: cv2.aruco.CharucoBoard,
-    charuco_corners_1: np.ndarray,
-    charuco_ids_1: np.ndarray,
-    charuco_corners_2: np.ndarray,
-    charuco_ids_2: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    ids1 = charuco_ids_1.flatten().astype(np.int32)
-    ids2 = charuco_ids_2.flatten().astype(np.int32)
-
-    idx1 = {int(cid): i for i, cid in enumerate(ids1)}
-    idx2 = {int(cid): i for i, cid in enumerate(ids2)}
-    common_ids = sorted(set(idx1.keys()) & set(idx2.keys()))
-
-    if not common_ids:
-        empty_obj = np.empty((0, 1, 3), dtype=np.float64)
-        empty_img = np.empty((0, 1, 2), dtype=np.float64)
-        return empty_obj, empty_img, empty_img.copy(), np.asarray([], dtype=np.int32)
-
-    common_ids_arr = np.asarray(common_ids, dtype=np.int32)
-    object_points = board.getChessboardCorners()[common_ids_arr].reshape(-1, 1, 3).astype(np.float64)
-    img_pts_1 = np.asarray([charuco_corners_1[idx1[cid], 0] for cid in common_ids], dtype=np.float64).reshape(-1, 1, 2)
-    img_pts_2 = np.asarray([charuco_corners_2[idx2[cid], 0] for cid in common_ids], dtype=np.float64).reshape(-1, 1, 2)
-    return object_points, img_pts_1, img_pts_2, common_ids_arr
-
-
-def _compute_pair_weight(num_common_corners: int, reproj_cam1: float, reproj_cam2: float) -> float:
-    reproj_score = max(0.25, (reproj_cam1 + reproj_cam2) * 0.5)
-    raw_weight = np.sqrt(float(num_common_corners)) / reproj_score
-    return float(np.clip(raw_weight, MIN_PAIR_WEIGHT, MAX_PAIR_WEIGHT))
-
 
 def _compute_pair_transform(rvec_1, tvec_1, rvec_2, tvec_2):
     T_cam1_board = rt_to_T(rvec_1, tvec_1)
     T_cam2_board = rt_to_T(rvec_2, tvec_2)
     return T_cam2_board @ np.linalg.inv(T_cam1_board)
-
-
-def _solve_pnp_robust(
-    obj_pts: np.ndarray,
-    img_pts: np.ndarray,
-    K: np.ndarray,
-    dist: np.ndarray,
-) -> tuple[bool, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
-    if obj_pts.shape[0] < 4:
-        return False, None, None, None
-
-    ok, rvec, tvec, inliers = cv2.solvePnPRansac(
-        objectPoints=obj_pts,
-        imagePoints=img_pts,
-        cameraMatrix=K,
-        distCoeffs=dist,
-        useExtrinsicGuess=False,
-        iterationsCount=200,
-        reprojectionError=PNP_RANSAC_REPROJ_ERR,
-        confidence=PNP_RANSAC_CONFIDENCE,
-        flags=cv2.SOLVEPNP_ITERATIVE,
-    )
-
-    if not ok or inliers is None or len(inliers) < MIN_PNP_INLIERS:
-        return False, None, None, inliers
-
-    inlier_idx = inliers.reshape(-1)
-    obj_in = obj_pts[inlier_idx]
-    img_in = img_pts[inlier_idx]
-
-    rvec_refined, tvec_refined = cv2.solvePnPRefineLM(
-        objectPoints=obj_in,
-        imagePoints=img_in,
-        cameraMatrix=K,
-        distCoeffs=dist,
-        rvec=rvec,
-        tvec=tvec,
-    )
-
-    return True, rvec_refined, tvec_refined, inliers
-
-
-def _pair_joint_rms(
-    sample: PoseSample,
-    T_cam2_cam1: np.ndarray,
-    K_cam1: np.ndarray,
-    dist_cam1: np.ndarray,
-    K_cam2: np.ndarray,
-    dist_cam2: np.ndarray,
-) -> float:
-    residual_blocks = []
-
-    rvec_1 = sample.rvec_cam1_board
-    tvec_1 = sample.tvec_cam1_board
-    proj_1, _ = cv2.projectPoints(sample.obj_pts_cam1, rvec_1, tvec_1, K_cam1, dist_cam1)
-    residual_blocks.append((proj_1.reshape(-1, 2) - sample.img_pts_cam1.reshape(-1, 2)).reshape(-1))
-
-    T_cam1_board = rt_to_T(rvec_1, tvec_1)
-    T_cam2_board = T_cam2_cam1 @ T_cam1_board
-    rvec_2, tvec_2 = T_to_rt(T_cam2_board)
-    proj_2, _ = cv2.projectPoints(sample.obj_pts_cam2, rvec_2, tvec_2, K_cam2, dist_cam2)
-    residual_blocks.append((proj_2.reshape(-1, 2) - sample.img_pts_cam2.reshape(-1, 2)).reshape(-1))
-
-    residuals = np.concatenate(residual_blocks).astype(np.float64)
-    return float(np.sqrt(np.mean(residuals ** 2)))
-
-
-def _reject_high_rms_pairs(
-    samples: list[PoseSample],
-    T_cam2_cam1: np.ndarray,
-    K_cam1: np.ndarray,
-    dist_cam1: np.ndarray,
-    K_cam2: np.ndarray,
-    dist_cam2: np.ndarray,
-    sigma_mult: float = 2.0,
-    min_threshold: float = 0.35,
-) -> tuple[list[PoseSample], np.ndarray, float]:
-    pair_rms = np.array(
-        [
-            _pair_joint_rms(sample, T_cam2_cam1, K_cam1, dist_cam1, K_cam2, dist_cam2)
-            for sample in samples
-        ],
-        dtype=np.float64,
-    )
-    rms_thr = _median_mad_threshold(pair_rms, sigma_mult=sigma_mult, min_threshold=min_threshold)
-    inliers = [sample for sample, v in zip(samples, pair_rms) if v <= rms_thr]
-    return inliers, pair_rms, rms_thr
 
 def _camera_suffix_from_calib_path(calib_path: Path) -> str:
     """
@@ -782,6 +504,53 @@ def _get_undistort_function(calib_dict, camera_suffix):
     # Mono
     return undistort_l
 
+def compute_reproj_rms_joint_basic(
+    samples: list[PoseSample],
+    K_cam1: np.ndarray,
+    dist_cam1: np.ndarray,
+    K_cam2: np.ndarray,
+    dist_cam2: np.ndarray,
+    T_cam2_cam1: np.ndarray,
+) -> float:
+    residual_blocks = []
+
+    for sample in samples:
+        rvec_1 = sample.rvec_cam1_board
+        tvec_1 = sample.tvec_cam1_board
+
+        if sample.obj_pts_cam1.shape[0] > 0:
+            proj_1, _ = cv2.projectPoints(
+                sample.obj_pts_cam1,
+                rvec_1,
+                tvec_1,
+                K_cam1,
+                dist_cam1,
+            )
+            res_1 = proj_1.reshape(-1, 2) - sample.img_pts_cam1.reshape(-1, 2)
+            residual_blocks.append(res_1.reshape(-1))
+
+        T_cam1_board = rt_to_T(rvec_1, tvec_1)
+        T_cam2_board = T_cam2_cam1 @ T_cam1_board
+        rvec_2, tvec_2 = T_to_rt(T_cam2_board)
+
+        if sample.obj_pts_cam2.shape[0] > 0:
+            proj_2, _ = cv2.projectPoints(
+                sample.obj_pts_cam2,
+                rvec_2,
+                tvec_2,
+                K_cam2,
+                dist_cam2,
+            )
+            res_2 = proj_2.reshape(-1, 2) - sample.img_pts_cam2.reshape(-1, 2)
+            residual_blocks.append(res_2.reshape(-1))
+
+    if not residual_blocks:
+        return float("nan")
+
+    residuals = np.concatenate(residual_blocks).astype(np.float64)
+    rms = float(np.sqrt(np.mean(residuals ** 2)))
+    return rms
+
 
 def estimate_relative_pose(
     image_dir: Path,
@@ -794,36 +563,32 @@ def estimate_relative_pose(
     squares_horizontally=6,
     squares_vertically=8,
     squares_length=32.0,
-    marker_length=22.0,
-    min_common_corners: int = MIN_COMMON_CORNERS,
-    use_pair_weights: bool = True,
-    max_imgs: int = None
-
+    marker_length=22.0
 ) -> None:
     image_dir = Path(image_dir)
     cam1_calib = Path(cam1_calib)
     cam2_calib = Path(cam2_calib)
     output_path = Path(output_path)
 
-
-
-    calib_dict_cam1 = load_calib_data(cam1_calib, type=cam1_suffix)
-    calib_dict_cam2 = load_calib_data(cam2_calib, type=cam2_suffix)
+    print(cam2_calib)
+    calib_dict_cam1 = load_yaml_calibration(cam1_calib)  # load_calib_data(cam1_calib, type=cam1_suffix)
+    calib_dict_cam2 = load_camera_calibration(cam2_calib,
+                                              suffix=cam2_suffix)  # load_calib_data(cam2_calib, type=cam2_suffix)
+    calib_stereo = load_dict(cam2_calib)
 
     K_cam1, dist_cam1 = calib_dict_cam1["K"], calib_dict_cam1["D"]
-    K_cam2, dist_cam2 = calib_dict_cam2["K"], calib_dict_cam2["D"]
+    # K_cam2, dist_cam2 = calib_dict_cam2["K"], calib_dict_cam2["D"]
+
+    K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)
 
     undistort_1 = _get_undistort_function(calib_dict_cam1, cam1_suffix)
-    undistort_2 = _get_undistort_function(calib_dict_cam2, cam2_suffix)
-
-    # undistort_1 = None
-    # undistort_2 = None
+    undistort_2 = _get_undistort_function(calib_stereo, cam2_suffix)
 
     print(f"Camera 1: {cam1_suffix}")
     print(f"Camera 2: {cam2_suffix}")
 
     _, board, detector = create_charuco_board(squares_horizontally=squares_horizontally, squares_vertically=squares_vertically, squares_length=squares_length, marker_length=marker_length)
-    pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix, max_imgs=max_imgs)
+    pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix)
 
     if not pairs:
         raise RuntimeError(
@@ -907,67 +672,32 @@ def estimate_relative_pose(
             )
             continue
 
-        obj_pts_common, img_pts_1, img_pts_2, common_ids = _extract_common_charuco_points(
-            board=board,
-            charuco_corners_1=charuco_corners_1,
-            charuco_ids_1=charuco_ids_1,
-            charuco_corners_2=charuco_corners_2,
-            charuco_ids_2=charuco_ids_2,
-        )
-        num_common = int(common_ids.size)
-
-        if num_common < min_common_corners:
-            print(
-                f"{pair_name}: rejected (common corners={num_common}, "
-                f"required>={min_common_corners})"
-            )
-            continue
-
-        ok1, rvec_1_common, tvec_1_common, inliers1 = _solve_pnp_robust(
-            obj_pts_common, img_pts_1, K_cam1, dist_cam1
-        )
-        ok2, rvec_2_common, tvec_2_common, inliers2 = _solve_pnp_robust(
-            obj_pts_common, img_pts_2, K_cam2, dist_cam2
-        )
-        if not ok1 or not ok2:
-            print(f"{pair_name}: rejected (solvePnP failed on common corners)")
-            continue
-
-        inlier_ids = np.intersect1d(inliers1.reshape(-1), inliers2.reshape(-1))
-        if inlier_ids.size < MIN_PNP_INLIERS:
-            print(
-                f"{pair_name}: rejected (PnP inlier overlap too small: {inlier_ids.size})"
-            )
-            continue
-        obj_pts_1 = obj_pts_common[inlier_ids].copy()
-        obj_pts_2 = obj_pts_common[inlier_ids].copy()
-        img_pts_1 = img_pts_1[inlier_ids].copy()
-        img_pts_2 = img_pts_2[inlier_ids].copy()
-
-        T_cam2_cam1 = _compute_pair_transform(rvec_1_common, tvec_1_common, rvec_2_common, tvec_2_common)
-        pair_weight = _compute_pair_weight(num_common, err_1, err_2) if use_pair_weights else 1.0
+        T_cam2_cam1 = _compute_pair_transform(rvec_1, tvec_1, rvec_2, tvec_2)
 
         baseline_pair = float(np.linalg.norm(T_cam2_cam1[:3, 3]))
         print(f"{pair_name}: baseline={baseline_pair:.4f}")
-        print(
-            f"{pair_name}: accepted, common={num_common}, weight={pair_weight:.3f}, "
-            f"reproj_cam1={err_1:.3f}px reproj_cam2={err_2:.3f}px"
-        )
+        print(f"{pair_name}: accepted, reproj_cam1={err_1:.3f}px reproj_cam2={err_2:.3f}px")
 
+        ids1 = charuco_ids_1.flatten().astype(np.int32)
+        ids2 = charuco_ids_2.flatten().astype(np.int32)
+
+        obj_pts_1 = board.getChessboardCorners()[ids1].reshape(-1, 1, 3).astype(np.float64)
+        img_pts_1 = charuco_corners_1.reshape(-1, 1, 2).astype(np.float64)
+
+        obj_pts_2 = board.getChessboardCorners()[ids2].reshape(-1, 1, 3).astype(np.float64)
+        img_pts_2 = charuco_corners_2.reshape(-1, 1, 2).astype(np.float64)
         samples.append(
             PoseSample(
                 pair_name=pair_name,
                 T_cam2_cam1=T_cam2_cam1,
                 reproj_cam1=err_1,
                 reproj_cam2=err_2,
-                rvec_cam1_board=rvec_1_common.copy(),
-                tvec_cam1_board=tvec_1_common.copy(),
+                rvec_cam1_board=rvec_1.copy(),
+                tvec_cam1_board=tvec_1.copy(),
                 obj_pts_cam1=obj_pts_1,
                 img_pts_cam1=img_pts_1,
                 obj_pts_cam2=obj_pts_2,
                 img_pts_cam2=img_pts_2,
-                weight=pair_weight,
-                num_common_corners=num_common,
             )
         )
 
@@ -986,62 +716,30 @@ def estimate_relative_pose(
     if not inliers:
         raise RuntimeError("All pair transforms were rejected as outliers.")
 
-    # rotations = [sample.T_cam2_cam1[:3, :3] for sample in inliers]
-    # translations = np.array([sample.T_cam2_cam1[:3, 3] for sample in inliers], dtype=np.float64)
-    #
-    # R_avg = average_rotations(rotations)    #použiť knižnicu, nie je trivialne | joint optimization cez všetky pozorovania naraz
-    # t_avg = np.mean(translations, axis=0)
-    #
-    # T_avg = np.eye(4, dtype=np.float64)
-    # T_avg[:3, :3] = R_avg
-    # T_avg[:3, 3] = t_avg
-    #
-    # baseline = float(np.linalg.norm(t_avg))
-    T_init = compute_reference_transform(inliers)
-    T_opt, R_opt, t_opt, reproj_rms = optimize_global_camera_pose(
+    rotations = [sample.T_cam2_cam1[:3, :3] for sample in inliers]
+    translations = np.array([sample.T_cam2_cam1[:3, 3] for sample in inliers], dtype=np.float64)
+
+    R_avg = average_rotations(rotations)    #použiť knižnicu, nie je trivialne | joint optimization cez všetky pozorovania naraz
+    t_avg = np.mean(translations, axis=0)
+
+    T_avg = np.eye(4, dtype=np.float64)
+    T_avg[:3, :3] = R_avg
+    T_avg[:3, 3] = t_avg
+    reproj_rms = compute_reproj_rms_joint_basic(
         samples=inliers,
         K_cam1=K_cam1,
         dist_cam1=dist_cam1,
         K_cam2=K_cam2,
         dist_cam2=dist_cam2,
-        T_init=T_init,
+        T_cam2_cam1=T_avg,
     )
 
-    inliers_rms, pair_rms, pair_rms_thr = _reject_high_rms_pairs(
-        samples=inliers,
-        T_cam2_cam1=T_opt,
-        K_cam1=K_cam1,
-        dist_cam1=dist_cam1,
-        K_cam2=K_cam2,
-        dist_cam2=dist_cam2,
-    )
-    print(
-        f"Pair RMS rejection threshold: {pair_rms_thr:.3f}px, "
-        f"kept {len(inliers_rms)} / {len(inliers)}"
-    )
-    if len(inliers_rms) >= max(6, len(inliers) // 2):
-        T_init_refined = compute_reference_transform(inliers_rms)
-        T_opt, R_opt, t_opt, reproj_rms = optimize_global_camera_pose(
-            samples=inliers_rms,
-            K_cam1=K_cam1,
-            dist_cam1=dist_cam1,
-            K_cam2=K_cam2,
-            dist_cam2=dist_cam2,
-            T_init=T_init_refined,
-        )
-        inliers = inliers_rms
-    else:
-        print("Skipping second optimization pass (too few pair-RMS inliers).")
-    baseline = float(np.linalg.norm(t_opt))
-
+    baseline = float(np.linalg.norm(t_avg))
     print("BASELINE:", baseline)
     print(f"Final joint reprojection RMS: {reproj_rms:.4f}px")
 
-    # rot_dev = [rotation_angle_deg(R, R_avg) for R in rotations]
-    # trans_dev = [float(np.linalg.norm(t - t_avg)) for t in translations]
-
-    rot_dev = [rotation_angle_deg(sample.T_cam2_cam1[:3, :3], R_opt) for sample in inliers]
-    trans_dev = [float(np.linalg.norm(sample.T_cam2_cam1[:3, 3] - t_opt)) for sample in inliers]
+    rot_dev = [rotation_angle_deg(R, R_avg) for R in rotations]
+    trans_dev = [float(np.linalg.norm(t - t_avg)) for t in translations]
 
     yaml_path = save_relative_pose_yaml(
         out_dir=output_path,
@@ -1051,14 +749,13 @@ def estimate_relative_pose(
         dist_cam1=dist_cam1,
         K_cam2=K_cam2,
         dist_cam2=dist_cam2,
-        T_cam2_cam1=T_opt,
-        R_cam2_cam1=R_opt,
-        t_cam2_cam1=t_opt,
+        T_cam2_cam1=T_avg,
+        R_cam2_cam1=R_avg,
+        t_cam2_cam1=t_avg,
         baseline=baseline,
         reproj_rms_joint=reproj_rms,
         num_pairs_total=len(pairs),
         num_pairs_used=len(samples),
-        num_pairs_inliers=len(inliers),
         rotation_deviation_deg_mean=float(np.mean(rot_dev)),
         rotation_deviation_deg_std=float(np.std(rot_dev)),
         translation_deviation_mean=float(np.mean(trans_dev)),
@@ -1082,7 +779,6 @@ def save_relative_pose_yaml(
     reproj_rms_joint: float,
     num_pairs_total: int,
     num_pairs_used: int,
-    num_pairs_inliers: int,
     rotation_deviation_deg_mean: float,
     rotation_deviation_deg_std: float,
     translation_deviation_mean: float,
@@ -1094,7 +790,7 @@ def save_relative_pose_yaml(
     safe_cam1 = cam1_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
     safe_cam2 = cam2_suffix.replace(".", "").replace("*", "").replace("_", "").lower()
 
-    filename = f"relative_pose_{safe_cam1}_to_{safe_cam2}_v3.yaml"
+    filename = f"relative_pose_{safe_cam1}_to_{safe_cam2}.yaml"
     out_path = out_dir / filename
 
     fs = cv2.FileStorage(str(out_path), cv2.FILE_STORAGE_WRITE)
@@ -1127,7 +823,6 @@ def save_relative_pose_yaml(
         fs.write("reproj_rms_joint", float(reproj_rms_joint))
         fs.write("num_pairs_total", int(num_pairs_total))
         fs.write("num_pairs_used", int(num_pairs_used))
-        fs.write("num_pairs_inliers", int(num_pairs_inliers))
 
         fs.write("rotation_deviation_deg_mean", float(rotation_deviation_deg_mean))
         fs.write("rotation_deviation_deg_std", float(rotation_deviation_deg_std))
@@ -1150,21 +845,21 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    parent_dir = Path(__file__).resolve().parent.parent.parent
-    date = "24032026"
-    dataset_dir = parent_dir / f'dataset_{date}'
+    parent_dir = Path(__file__).resolve().parents[3]
+    date = "27032026"
+    dataset_dir = parent_dir / "datasets" / f'dataset_{date}'
     depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
-    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
+    out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
 
-    calib_dict_stereo =  out_dir / "calib_data.npy"
+    calib_dict_stereo = out_dir / "calib_data.npy"
 
-    calib_dict_NICO_left = out_dir / "left_NICO.yaml"
+    calib_dict_NICO_left = out_dir / "left_calibration_1280x720.yaml"
     calib_dict_NICO_right = out_dir / "right_NICO.yaml"
     calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
     calib_dict_zed = out_dir / "zed_calibration_1280x720.yaml"
 
     cam1_calib = calib_dict_realsense
-    cam2_calib = calib_dict_zed
+    cam2_calib = calib_dict_stereo
 
     out_dir = out_dir / "relative_pose"
 
@@ -1178,8 +873,7 @@ if __name__ == "__main__":
         cam2_calib=args.cam2_calib,
         output_path=args.output,
         cam1_suffix="realsense",
-        cam2_suffix="zed",
-        debug=0,
-        squares_horizontally=6, squares_vertically=8, squares_length=44.0, marker_length=30.0,
-        max_imgs=28
+        cam2_suffix="left",
+        debug=2,
+        squares_horizontally=6, squares_vertically=8, squares_length=45.0, marker_length=31.0,
     )

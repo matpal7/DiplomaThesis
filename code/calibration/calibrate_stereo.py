@@ -6,9 +6,9 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 
-from calibration.image import get_undistort_functions
-from calibration.undistored_images import show_undistorted_images
-from utils import get_l_r_image_fnames, load_dict, save_dict
+from code.calibration.image import get_undistort_functions
+from code.calibration.undistored_images import show_undistorted_images
+from code.utils import get_l_r_image_fnames, load_dict, save_dict
 
 CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 frameSize = (640, 480)
@@ -78,7 +78,6 @@ def calibrate(calib_img_folder, chessboard_x=7, chessboard_y=4, chessboard_dim=3
                                                                                     debug=debug, max_imgs=max_imgs)
 
     print("Calibrating camera")
-    print(chessboard_dim)
     retval, objectPoints, imagePoints1, imagePoints2, K_l, xi_l, D_l, K_r, xi_r, D_r, rvec, tvec, rvecs_L, tvecs_L, idx = cv2.omnidir.stereoCalibrate(
         obj_pts, img_pts_l, img_pts_r, img_dim_l, img_dim_r, None, None, None, None, None, None, 0, CRITERIA)
     print("retval: ", retval)
@@ -142,16 +141,6 @@ def calibrate(calib_img_folder, chessboard_x=7, chessboard_y=4, chessboard_dim=3
                   'img_dim_l': img_dim_l, 'img_dim_r': img_dim_r, 'new_K_l_wide': new_K_l_wide,
                   'new_K_r_wide': new_K_r_wide}
 
-    print("LEFT CAMERA")
-    print("K_l:\n", K_l)
-    print("xi_l:", xi_l)
-    print("D_l:", D_l)
-
-    print("\nRIGHT CAMERA")
-    print("K_r:\n", K_r)
-    print("xi_r:", xi_r)
-    print("D_r:", D_r)
-
     return calib_dict
 
 
@@ -184,19 +173,20 @@ def parse_args():
 
 
 if __name__ == '__main__':
-    parent_dir = Path(__file__).resolve().parent.parent
-    date = "11032026"
-    dataset_dir = parent_dir / f"dataset_{date}"
+    parent_dir = Path(__file__).resolve().parents[2]
+    date = "27032026"
+    dataset_dir = parent_dir /"datasets" / f"dataset_{date}"
     calib_imgs_dir = dataset_dir / "stereo_4k_calibration" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
+    out_dir = parent_dir /"out" / f"out_{date}" / "cameras_parameters"
     debug = 0
 
 
     calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=45, chessboard_x=8, chessboard_y=5)
     baseline_m = np.linalg.norm(calib_dict["tvec"].reshape(-1)) / 1000.0
     print("BASELINE in meters:", baseline_m)
+    print(out_dir)
     save_dict(calib_dict, out_dir)
-    # calib_dict = load_dict(out_dir / "calib_data.npy")
+    calib_dict = load_dict(out_dir / "calib_data.npy")
     #
-    # show_undistorted_images(calib_dict, calib_imgs_dir)
+    show_undistorted_images(calib_dict, calib_imgs_dir)

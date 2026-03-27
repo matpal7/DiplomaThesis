@@ -7,18 +7,24 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from calibration.ChArUco.charuco_relative_pose_pnp import _get_undistort_function
-from calibration.image import load_calib_data
+from calibration.ChArUco.charuco_relative_pose_pnp import _get_undistort_function, load_camera_calibration
+from calibration.image import load_calib_data, load_yaml_calibration, get_undistort_function_mono
+from code.utils import load_dict
 
 
-def _read_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray]:
+def _read_camera_calibration(path: Path, use_undistored: bool = True) -> tuple[np.ndarray, np.ndarray]:
     fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
     if not fs.isOpened():
         raise FileNotFoundError(f"Cannot open calibration file: {path}")
 
+    key_K, key_D = "K", "D"
+    if use_undistored:
+        key_D = "D_new"
+        key_K = "K_new"
+
     try:
-        K = fs.getNode("K").mat()
-        D = fs.getNode("D").mat()
+        K = fs.getNode(key_K).mat()
+        D = fs.getNode(key_D).mat()
     finally:
         fs.release()
 
@@ -37,28 +43,6 @@ def _validate_transform(T: np.ndarray, path: Path) -> np.ndarray:
 
 def _read_relative_pose(path: Path) -> np.ndarray:
     suffix = path.suffix.lower()
-
-    if suffix == ".json":
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        matrix_keys = (
-            "T_cam2_cam1",
-            "T_right_left",
-            "T_right_from_left",
-            "T_cam1_cam2",
-        )
-        key = next((k for k in matrix_keys if k in data), None)
-
-        if key is None:
-            raise ValueError(f"Could not find a 4x4 transform matrix in JSON file: {path}")
-
-        T = np.asarray(data[key], dtype=np.float64)
-        if key == "T_cam1_cam2":
-            T = np.linalg.inv(T)
-
-        return _validate_transform(T, path)
-
     if suffix in {".yml", ".yaml"}:
         fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
         if not fs.isOpened():
@@ -611,47 +595,50 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    parent_dir = Path(__file__).resolve().parent.parent
+    parent_dir = Path(__file__).resolve().parents[1]
 
-    date = "24032026"
+    date = "27032026"
 
-    dataset_dir = parent_dir / f"dataset_{date}"
+    dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
     depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
+    img_number = 21
+    args.image_cam1 = depth_dir / f"{img_number}_realsense.png"
+    args.image_cam2 = depth_dir / f"{img_number}_left.png"
 
-    args.image_cam1 = depth_dir / "10_realsense.png"
-    args.image_cam2 = depth_dir / "10_zed.png"
-
-    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
+    out_dir = parent_dir / 'out' / f"out_{date}" / "cameras_parameters"
 
     calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
-    calib_dict_zed = out_dir / "zed_calibration_1280x720.yaml"
-    calib_dict_NICO_left = out_dir / "left_NICO.yaml"
+    calib_dict_zed = out_dir / "left_calibration_1280x720.yaml"
+    calib_dict_NICO_left = out_dir / "left_calibration_1280x720.yaml"
     calib_dict_stereo = out_dir / "calib_data.npy"
 
 
 
-    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_zed.yaml"
+    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
     args.cam1_calib = calib_dict_realsense
-    args.cam2_calib = calib_dict_zed
-    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / "10_realsense_depth.npy"
+    args.cam2_calib = calib_dict_stereo
+    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / f"{img_number}_realsense_depth.npy"
 
     args.mode == 'cam1_to_cam2'
 
+
+
     suffix1 = "realsense"
-    suffix2 = "zed"
+    suffix2 = "left"
 
     calib_dict_cam1 = load_calib_data(args.cam1_calib, type=suffix1)
-    calib_dict_cam2 = load_calib_data(args.cam2_calib, type=suffix2)
+    calib_dict_cam2 = load_dict(args.cam2_calib)
 
     undistort_1 = _get_undistort_function(calib_dict_cam1, suffix1)
     undistort_2 = _get_undistort_function(calib_dict_cam2, suffix2)
-
+    # undistort_1 = None
+    # undistort_2 = None
     img1 = cv2.imread(str(args.image_cam1))
     if img1 is None:
         raise FileNotFoundError(f'Cannot read camera 1 image: {args.image_cam1}')
 
     img1 = undistort_1(img1)
-    K1, D1 = _read_camera_calibration(args.cam1_calib)
+    K1, D1 = calib_dict_cam1["K"], calib_dict_cam1["D"]
 
     if args.image_cam2 is None or args.cam2_calib is None or args.relative_pose is None:
         raise ValueError('Modes cam1_to_cam2/cam2_to_cam1_via_cam1_depth require --image-cam2 --cam2-calib --relative-pose')
@@ -661,7 +648,7 @@ def main() -> None:
         raise FileNotFoundError(f'Cannot read camera 2 image: {args.image_cam2}')
     img2 = undistort_2(img2)
 
-    K2, D2 = _read_camera_calibration(args.cam2_calib)
+    K2, D2 = load_camera_calibration(args.cam2_calib, suffix=suffix2)
     T_cam2_cam1 = _read_relative_pose(args.relative_pose)
     T_cam2_cam1[:3, 3] /= 1000.0
 

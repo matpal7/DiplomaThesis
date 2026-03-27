@@ -3,10 +3,10 @@ from tqdm import tqdm
 import numpy as np
 import cv2
 
-from calibration.ChArUco.charuco_relative_pose_pnp import find_images
-from calibration.calibrate_stereo import extract_chessboard_points
-from calibration.image import get_undistort_functions
-from utils import get_l_r_image_fnames, load_dict
+from code.calibration.ChArUco.charuco_relative_pose_pnp import find_images
+from code.calibration.calibrate_stereo import extract_chessboard_points
+from code.calibration.image import get_undistort_functions
+from code.utils import get_l_r_image_fnames, load_dict
 
 CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
@@ -152,7 +152,7 @@ def calibrate_on_undistored(
     if camera_side not in ("left", "right"):
         raise ValueError("camera_side must be 'left' or 'right'")
 
-    undistort_l, undistort_r = get_undistort_functions(calib_dict, correct_horizon=False)
+    undistort_l, undistort_r = get_undistort_functions(calib_dict)
     images_l, images_r = get_l_r_image_fnames(img_folder, max_imgs)
 
     if camera_side == "left":
@@ -216,7 +216,8 @@ def calibrate(
     max_imgs=20,
     debug=0,
     file_suffix="calibration",
-    frame_size=(1280, 720)
+    frame_size=(1280, 720),
+    alpha=0.0,
 ):
     images = find_images(img_folder, suffix)[:max_imgs]
     print(img_folder)
@@ -233,6 +234,19 @@ def calibrate(
 
     calib = _run_calibration(obj_pts, img_pts, image_size, label=suffix)
 
+    K = np.asarray(calib["K"], dtype=np.float64).reshape(3, 3)
+    D = np.asarray(calib["D"], dtype=np.float64).reshape(-1, 1)
+
+    new_K, roi = cv2.getOptimalNewCameraMatrix(
+        K,
+        D,
+        image_size,
+        alpha,
+        image_size,
+    )
+
+    new_D = np.zeros_like(D, dtype=np.float64)
+
     rectified_calib_dict = {
         "camera": suffix,
         "source_img_folder": str(img_folder),
@@ -240,6 +254,10 @@ def calibrate(
         "chessboard_y": chessboard_y,
         "chessboard_dim": chessboard_dim,
         **calib,
+        "new_K": new_K,
+        "new_D": new_D,
+        "undistort_alpha": float(alpha),
+        "undistort_roi": np.asarray(roi, dtype=np.int32),
     }
 
     out_dir = Path(out_dir)
@@ -254,6 +272,10 @@ def calibrate(
             "chessboard_x": rectified_calib_dict["chessboard_x"],
             "chessboard_y": rectified_calib_dict["chessboard_y"],
             "chessboard_dim": rectified_calib_dict["chessboard_dim"],
+            "K_new": rectified_calib_dict["new_K"],
+            "D_new": rectified_calib_dict["new_D"],
+            "undistort_alpha": rectified_calib_dict["undistort_alpha"],
+            "undistort_roi": rectified_calib_dict["undistort_roi"],
         },
     )
 
@@ -293,26 +315,29 @@ def calibrate_mono(
     return camera_dict
 
 if __name__ == '__main__':
-    parent_dir = Path(__file__).resolve().parent.parent
-    date = "24032026"
-    dataset_dir = parent_dir / f"dataset_{date}"
+    parent_dir = Path(__file__).resolve().parents[2]
+    date = "27032026"
+    dataset_dir = parent_dir / "datasets" / f"dataset_{date}"
     calib_imgs_dir = dataset_dir / "stereo_4k_calibration_stereo" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    out_dir = parent_dir / f"out_{date}" / "cameras_parameters"
+    out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
     debug = 0
 
     # calib_dict = load_dict(out_dir / "calib_data.npy")
 
 
-    calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=44.0, max_imgs=28, chessboard_x=7,
+    calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=45.0, max_imgs=280, chessboard_x=7,
                             chessboard_y=5, debug=debug)
-    calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=44.0, max_imgs=28, chessboard_x=7,
+    calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=45.0, max_imgs=28, chessboard_x=7,
                             chessboard_y=5, debug=debug)
 
-    # left_dict = calibrate_mono(calib_imgs_dir, camera_side="left", chessboard_dim=30.0,
-    #                         max_imgs=40, chessboard_x=8, chessboard_y=5)
+    # calibrate(relative_pose_dir, str(out_dir), suffix="left", chessboard_dim=44.0, max_imgs=280, chessboard_x=7,
+    #           chessboard_y=5, debug=debug)
 
-    # print("calibrate_mono", left_dict)
+    # left_dict = calibrate_mono(relative_pose_dir, camera_side="left", chessboard_dim=44.0,
+    #                         max_imgs=15, chessboard_x=7, chessboard_y=5)
+
+    # print("calibrate_mono", left_di44ct)
 
     # right_dict = calibrate_mono(calib_imgs_dir, camera_side="right", chessboard_dim=0.030,
     #                            max_imgs=40, chessboard_x=8, chessboard_y=5)

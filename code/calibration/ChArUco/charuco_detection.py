@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 from sympy.codegen.ast import continue_
 
-from calibration.image import get_undistort_functions
-from utils import get_l_r_image_fnames, load_dict, save_dict
+from code.calibration.image import get_undistort_functions
+from code.utils import get_l_r_image_fnames, load_dict, save_dict
 
 ARUCO_DICT = cv2.aruco.DICT_4X4_250
 SQUARES_HORIZONTALLY = 5
@@ -218,7 +218,7 @@ def main():
 
     calib_dict = load_dict(calib_dirc_left_path)
 
-    undistored_l, _ = get_undistort_functions(calib_dict, correct_horizon=False)
+    undistored_l, _ = get_undistort_functions(calib_dict)
 
     left_images = sorted(calib_imgs_dir.glob("*_left.png"))
     # right_images = sorted(calib_imgs_dir.glob("*_right.png"))

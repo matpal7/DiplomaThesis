@@ -8,10 +8,14 @@ import pyrealsense2 as rs
 import cv2
 import pyzed.sl as sl
 
-from calibration.ChArUco.charuco_detection import create_charuco_board, detect_charuco_in_image_live
-from utils import load_dict
-from calibration.image import get_undistort_functions
-from visualize_depth import colorize_depth
+from ChArUco.charuco_detection import create_charuco_board, detect_charuco_in_image_live
+from code.calibration.image import get_undistort_functions
+from code.utils import load_dict
+from code.visualize_depth import colorize_depth
+
+# from utils import load_dict
+# from calibration.image import get_undistort_functions
+# from visualize_depth import colorize_depth
 
 width_4K = 3840
 height_4K = 2160
@@ -500,7 +504,8 @@ def save_cameras_on_click(
         squares_horizontally=6,
         squares_vertically=8,
         squares_length=32.0,
-        marker_length=22.0
+        marker_length=22.0,
+        detect_board = True
 ):
 
     """
@@ -595,6 +600,12 @@ def save_cameras_on_click(
             img_l = undistort_l(img_l)
             img_r = undistort_r(img_r)
 
+        img_l_vis = img_l.copy()
+        img_r_vis = img_r.copy()
+        if detect_board:
+            img_l_vis = detect_charuco_in_image_live(img_l_vis, board, detector)
+            img_r_vis = detect_charuco_in_image_live(img_r_vis, board, detector)
+
         img_realsense = None
         img_realsense_vis = None
         depth_meters_realsense = None
@@ -612,7 +623,9 @@ def save_cameras_on_click(
                 return False
 
             img_realsense = np.asanyarray(color_frame.get_data())
-            img_realsense_vis = detect_charuco_in_image_live(img_realsense.copy(), board, detector)
+            img_realsense_vis = img_realsense.copy()
+            if detect_board:
+                img_realsense_vis = detect_charuco_in_image_live(img_realsense.copy(), board, detector)
             depth_image = np.asanyarray(depth_frame.get_data())
             depth_meters_realsense = depth_image.astype(np.float32) * depth_scale
             depth_realsense_colored = colorize_depth(depth_meters_realsense, cv2.COLORMAP_TURBO)
@@ -635,15 +648,17 @@ def save_cameras_on_click(
 
             img_zed = zed_img_mat.get_data()
             img_zed = cv2.cvtColor(img_zed, cv2.COLOR_BGRA2BGR)
-            img_zed_vis = detect_charuco_in_image_live(img_zed.copy(), board, detector)
+            img_zed_vis = img_zed.copy()
+            if detect_board:
+                img_zed_vis = detect_charuco_in_image_live(img_zed.copy(), board, detector)
 
             depth_zed = zed_depth_mat.get_data().copy().astype(np.float32)
             depth_zed_colored = colorize_depth(depth_zed, cv2.COLORMAP_TURBO)
 
         last["img_l_raw"] = img_l_raw
         last["img_r_raw"] = img_r_raw
-        last["img_l_disp"] = img_l
-        last["img_r_disp"] = img_r
+        last["img_l_vis"] = img_l_vis
+        last["img_r_vis"] = img_r_vis
         last["img_realsense"] = img_realsense
         last["img_realsense_vis"] = img_realsense_vis
         last["depth_realsense"] = depth_meters_realsense
@@ -655,13 +670,13 @@ def save_cameras_on_click(
         return True
 
     def show_preview():
-        if last["img_l_disp"] is None or last["img_r_disp"] is None:
+        if last["img_l_vis"] is None or last["img_r_vis"] is None:
             blank = np.zeros((frame_size_display[1], frame_size_display[0], 3), dtype=np.uint8)
             cv2.imshow("Captured Frames", blank)
             return
 
-        top_left = _make_labeled_tile(last["img_l_disp"], "Stereo Left", frame_size_display)
-        top_right = _make_labeled_tile(last["img_r_disp"], "Stereo Right", frame_size_display)
+        top_left = _make_labeled_tile(last["img_l_vis"], "Stereo Left", frame_size_display)
+        top_right = _make_labeled_tile(last["img_r_vis"], "Stereo Right", frame_size_display)
 
         mid_left = _make_labeled_tile(last["img_realsense_vis"], "RealSense RGB", frame_size_display)
         mid_right = _make_labeled_tile(
@@ -679,8 +694,8 @@ def save_cameras_on_click(
 
         row1 = cv2.hconcat([top_left, top_right])
 
-        # concat_rows = [row1]
-        concat_rows = []
+        concat_rows = [row1]
+        # concat_rows = []
         if use_realsense:
             row2 = cv2.hconcat([mid_left, mid_right])
             concat_rows.append(row2)
@@ -710,8 +725,8 @@ def save_cameras_on_click(
                 print("No captured frame to save. Press SPACE first.")
                 continue
 
-            # cv2.imwrite(os.path.join(rgb_dir, f"{num}_left.png"), last["img_l_raw"])
-            # cv2.imwrite(os.path.join(rgb_dir, f"{num}_right.png"), last["img_r_raw"])
+            cv2.imwrite(os.path.join(rgb_dir, f"{num}_left.png"), last["img_l_raw"])
+            cv2.imwrite(os.path.join(rgb_dir, f"{num}_right.png"), last["img_r_raw"])
 
             if use_realsense and last["img_realsense"] is not None and last["depth_realsense"] is not None:
                 cv2.imwrite(os.path.join(rgb_dir, f"{num}_realsense.png"), last["img_realsense"])
@@ -736,20 +751,25 @@ def save_cameras_on_click(
 
 if __name__ == '__main__':
     chessboard_size = (8,5)
-    parent_dir = Path(__file__).resolve().parent.parent
+    parent_dir = Path(__file__).resolve().parents[2]
+    date = "27032026"
 
     # calib_dir = load_dict(out_dir + "/calib_data.npy")
-    dataset_dir = os.path.join(parent_dir, 'dataset_24032026')
+    dataset_dir = os.path.join(parent_dir, "datasets", f'dataset_{date}')
     depth_dir = os.path.join(dataset_dir, 'stereo_4k_relative_pose')
+    print(depth_dir)
 
-    out_dir = parent_dir / "out" / "cameras_parameters"
-    # calib_dict = load_dict(out_dir / "calib_data.npy")
+    out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
+    calib_dict = load_dict(out_dir / "calib_data.npy")
 
-    save_cameras_on_click(3,3, frame_size_stereo=frame_size_4K, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=None,
+    stereo_frame_size = frame_size_4K
+    # stereo_frame_size = FRAME_SIZE_REALSENSE
+
+    save_cameras_on_click(4,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict,
                           squares_horizontally=6,
                           squares_vertically=8,
-                          squares_length=44.0,
-                          marker_length=30.0
+                          squares_length=45.0,
+                          marker_length=31.0
                             )
 
     # #show_undistor   ed(depth_dir + "/rgb", calib_dir)
