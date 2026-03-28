@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from sympy.codegen.ast import continue_
 
-from code.calibration.image import get_undistort_functions
+from code.image import get_undistort_functions
 from code.utils import get_l_r_image_fnames, load_dict, save_dict
 
 ARUCO_DICT = cv2.aruco.DICT_4X4_250

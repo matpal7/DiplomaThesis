@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 from matplotlib import pyplot as plt
 
-from code.calibration.image import load_rgb_depth_pairs
+from code.image import load_rgb_depth_pairs
 
 
 def visualize_depth(
@@ -90,7 +90,7 @@ def colorize_depth(depth_m: np.ndarray, color_map=cv2.COLORMAP_TURBO) -> np.ndar
     return depth_colored
 
 if __name__ == '__main__':
-    parent_dir = Path(__file__).resolve().parent
+    parent_dir = Path(__file__).resolve().parents
     dataset_dir = parent_dir / "dataset_17032026"
     calib_imgs_dir = dataset_dir / "stereo_4k_calibration" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_depth"

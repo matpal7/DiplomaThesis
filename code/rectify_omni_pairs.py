@@ -114,11 +114,12 @@ def _make_preview_pair(img_l, img_r, preview_size=(680, 480), draw_lines=True, s
 def main() -> None:
     args = parse_args()
 
-    parent_dir = Path(__file__).resolve().parent
-    dataset_dir = parent_dir / "dataset_11032026"
+    parent_dir = Path(__file__).resolve().parents[2]
+    date = "28032026"
+    dataset_dir = parent_dir / "datasets" / f"dataset_{date}"
     calib_imgs_dir = dataset_dir / "stereo_4k_calibration" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    out_dir = parent_dir / "out" / "cameras_parameters"
+    out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
     debug = 2
 
     args.calib_dict = out_dir / "calib_data.npy"
@@ -153,81 +154,28 @@ def main() -> None:
     new_K_l = _pick_new_k(calib, left=True, use_wide=args.use_wide, balance=args.balance)
     new_K_r = _pick_new_k(calib, left=False, use_wide=args.use_wide, balance=args.balance)
 
-    R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
-        cameraMatrix1=new_K_l,
-        distCoeffs1=np.zeros((4, 1), dtype=np.float64),
-        cameraMatrix2=new_K_r,
-        distCoeffs2=np.zeros((4, 1), dtype=np.float64),
-        imageSize=img_size,
-        R=R_lr,
-        T=tvec,
-        flags=cv2.CALIB_ZERO_DISPARITY,
-        alpha=1.0,
-    )
+    R1, R2 = cv2.omnidir.stereoRectify(rvec, tvec)
+    R2_fixed = R2 @ R1.T  # keep left fixed, absorb R1 into right
+    P_out = new_K_l.copy()  # shared output K for both cameras
 
-    R1_inv = R1.T  # inverse of rotation
-    R2_fixed = R2 @ R1_inv
-
-    P2_fixed = P2.copy()
-    P2_fixed[:3, :3] = P2[:3, :3] @ R1.T
-
+    # Left: undistort only, no rotation
     map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(
-        K_l,
-        D_l,
-        xi_l,
-        R=np.eye(3, dtype=np.float64),  # 🔥 keep left unchanged
-        P=K_l,  # keep intrinsics
+        K_l, D_l, xi_l,
+        R=np.eye(3, dtype=np.float64),
+        P=P_out,
         size=img_size,
         m1type=cv2.CV_16SC2,
         flags=cv2.omnidir.RECTIFY_PERSPECTIVE,
     )
 
-    # map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(K_l, D_l, xi_l, R1, P1[:3, :3], img_size, cv2.CV_16SC2,
-    #                                                      cv2.omnidir.RECTIFY_PERSPECTIVE, )
-
-    # map1_r, map2_r = cv2.initUndistortRectifyMap(
-    #     K_r,
-    #     D_r,
-    #     R=R2_fixed, #R2,  # 🔥 apply rectification rotation
-    #     P=P2_fixed[:3, :3],  # projection from stereoRectify
-    #     size=img_size,
-    #     m1type=cv2.CV_16SC2,
-    #     flags=cv2.omnidir.RECTIFY_PERSPECTIVE,
-    # )
-
-    R2_fixed = R2 @ R1.T  # rotation that rectifies right w.r.t original left
-
-    # Build a projection for right that keeps similar intrinsics to new_K_r
-    K2_rect = P2[:3, :3]
-    fx_scale = new_K_r[0, 0] / K2_rect[0, 0]
-    fy_scale = new_K_r[1, 1] / K2_rect[1, 1]
-    S = np.diag([fx_scale, fy_scale, 1.0])
-
-    K2_eff = S @ K2_rect
-    K2_eff[0, 2] = new_K_r[0, 2]
-    K2_eff[1, 2] = new_K_r[1, 2]
-
-    P2_fixed = K2_eff  # for initUndistortRectifyMap, we only need 3x3
-
-    # --- maps ---
-    # Left: ONLY undistort, no rectifying rotation
-    map1_l, map2_l = cv2.initUndistortRectifyMap(
-        cameraMatrix=K_l,
-        distCoeffs=D_l,
-        R=np.eye(3, dtype=np.float64),
-        newCameraMatrix=K_l,  # or new_K_l if you want
-        size=img_size,
-        m1type=cv2.CV_16SC2,
-    )
-
-    # Right: undistort + relative rectification to align with (fixed) left
-    map1_r, map2_r = cv2.initUndistortRectifyMap(
-        cameraMatrix=K_r,
-        distCoeffs=D_r,
+    # Right: undistort + relative rectification computed by omnidir
+    map1_r, map2_r = cv2.omnidir.initUndistortRectifyMap(
+        K_r, D_r, xi_r,
         R=R2_fixed,
-        newCameraMatrix=P2_fixed,  # effective rectified intrinsics
+        P=P_out,
         size=img_size,
         m1type=cv2.CV_16SC2,
+        flags=cv2.omnidir.RECTIFY_PERSPECTIVE,
     )
 
     out_left = args.out_dir / "left"
@@ -241,7 +189,6 @@ def main() -> None:
     print("=" * 72)
     print(f"Pairs: {len(pairs)}")
     print(f"Image size: {img_size}")
-    print(f"ROI L={roi1}, ROI R={roi2}")
     print(f"Output dir: {args.out_dir}")
     print("=" * 72)
 
@@ -274,15 +221,6 @@ def main() -> None:
             img_r, map1_r, map2_r,
             interpolation=cv2.INTER_LINEAR,
             borderMode=cv2.BORDER_CONSTANT
-        )
-
-        # AFTER rectification
-        after_preview = _make_preview_pair(
-            rect_l,
-            rect_r,
-            preview_size=(680, 480),
-            draw_lines=True,
-            step=30,
         )
 
         # Optional 2x2 comparison grid

@@ -85,11 +85,11 @@ def load_calib_data(calib_file, type):
     return calib
 
 
-def get_undistort_functions(calib_file, stereo=True, get_rectified=False):
+def get_undistort_functions(calib_file, stereo=True, get_rectified=True):
     if stereo:
         if get_rectified:
             return get_rectify_functions(calib_file)
-        return get_rectify_functions(calib_file)
+        return get_undistort_functions_stereo(calib_file)
     return get_undistort_function_mono(calib_file)
 
 def get_undistort_functions_stereo(calib_file):
@@ -126,7 +126,7 @@ def load_l_r_images_undistorted(calib_dict, img_dir, max_imgs=None):
     return imgs_l, imgs_r
 
 def load_l_r_images_rectified(calib_dict, img_dir, max_imgs=None):
-    undistort_l, undistort_r, _ = get_rectify_functions(calib_dict)
+    undistort_l, undistort_r = get_rectify_functions(calib_dict)
     fnames_l, fnames_r = get_l_r_image_fnames(img_dir, max_imgs=max_imgs)
 
     imgs_l = [Image(fname, undistort_l) for fname in fnames_l]
@@ -150,21 +150,7 @@ def _as_omnidir_xi(xi) -> np.ndarray:
 def get_rectify_functions(
     calib_dict: dict,
 ):
-    """
-    Returns rectification functions for left/right stereo images.
 
-    Output images are:
-    - undistorted
-    - rectified to a common stereo geometry
-    - in perspective/pinhole model
-
-    Returns:
-        rectify_l, rectify_r, rect_data
-
-    rect_data contains:
-        R1, R2, P1, P2, Q, roi1, roi2, img_size
-    """
-    print(calib_dict)
     K_l = np.asarray(calib_dict["K_l"], dtype=np.float64).reshape(3, 3)
     D_l = np.asarray(calib_dict["D_l"], dtype=np.float64).reshape(-1)
     xi_l = (_as_omnidir_xi(calib_dict["xi_l"]))
@@ -188,38 +174,28 @@ def get_rectify_functions(
     new_K_l = calib_dict["new_K_l"]
     new_K_r = calib_dict["new_K_r"]
 
-    R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
-        cameraMatrix1=new_K_l,
-        distCoeffs1=np.zeros((4, 1), dtype=np.float64),
-        cameraMatrix2=new_K_r,
-        distCoeffs2=np.zeros((4, 1), dtype=np.float64),
-        imageSize=img_size,
-        R=R_lr,
-        T=tvec,
-        flags=cv2.CALIB_ZERO_DISPARITY,
-        alpha=0.0,
-    )
+    R1, R2 = cv2.omnidir.stereoRectify(rvec, tvec)
+    R2_fixed = R2 @ R1.T
+    P_out = new_K_l.copy()
 
+    # Left: undistort only, no rotation
     map1_l, map2_l = cv2.omnidir.initUndistortRectifyMap(
-        K_l,
-        D_l,
-        xi_l,
-        R1,
-        P1[:3, :3],
-        img_size,
-        cv2.CV_16SC2,
-        cv2.omnidir.RECTIFY_PERSPECTIVE,
+        K_l, D_l, xi_l,
+        R=np.eye(3, dtype=np.float64),
+        P=P_out,
+        size=img_size,
+        m1type=cv2.CV_16SC2,
+        flags=cv2.omnidir.RECTIFY_PERSPECTIVE,
     )
 
+    # Right: undistort + relative rectification computed by omnidir
     map1_r, map2_r = cv2.omnidir.initUndistortRectifyMap(
-        K_r,
-        D_r,
-        xi_r,
-        R2,
-        P2[:3, :3],
-        img_size,
-        cv2.CV_16SC2,
-        cv2.omnidir.RECTIFY_PERSPECTIVE,
+        K_r, D_r, xi_r,
+        R=R2_fixed,
+        P=P_out,
+        size=img_size,
+        m1type=cv2.CV_16SC2,
+        flags=cv2.omnidir.RECTIFY_PERSPECTIVE,
     )
 
     def rectify_l(img: np.ndarray) -> np.ndarray:
@@ -236,22 +212,7 @@ def get_rectify_functions(
             borderMode=cv2.BORDER_CONSTANT
         )
 
-    rect_data = {
-        "R1": R1,
-        "R2": R2,
-        "P1": P1,
-        "P2": P2,
-        "Q": Q,
-        "roi1": roi1,
-        "roi2": roi2,
-        "img_size": img_size,
-        "K_rect_l": P1[:3, :3].copy(),
-        "K_rect_r": P2[:3, :3].copy(),
-        "D_rect_l": np.zeros((5, 1), dtype=np.float64),
-        "D_rect_r": np.zeros((5, 1), dtype=np.float64),
-    }
-
-    return rectify_l, rectify_r#, rect_data
+    return rectify_l, rectify_r
 
 def extract_key(p: Path) -> str:
     return p.stem.split("_")[0]

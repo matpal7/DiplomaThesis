@@ -14,7 +14,7 @@ from code.calibration.ChArUco.charuco_detection import (
     TRESHOLD_CORNERS,
     create_charuco_board,
 )
-from code.calibration.image import get_undistort_functions, load_yaml_calibration, load_calib_data, \
+from code.image import get_undistort_functions, load_yaml_calibration, load_calib_data, \
     get_undistort_function_mono, numeric_key, extract_key
 from code.utils import load_dict, save_dict
 
@@ -1138,11 +1138,13 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = parse_args()
-    parent_dir = Path(__file__).resolve().parents[3]
-    date = "27032026"
+    parent_dir = Path(__file__).resolve().parents[4]
+    date = "28032026"
     dataset_dir = parent_dir / "datasets" / f'dataset_{date}'
     depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
+
+    rgbd_cam_suffix = "realsense"
 
     calib_dict_stereo = out_dir / "calib_data.npy"
 
@@ -1150,8 +1152,9 @@ if __name__ == "__main__":
     calib_dict_NICO_right = out_dir / "right_NICO.yaml"
     calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
     calib_dict_zed = out_dir / "zed_calibration_1280x720.yaml"
+    calib_dict_RGBD_cam = out_dir / f"{rgbd_cam_suffix}_calibration_1280x720.yaml"
 
-    cam1_calib = calib_dict_realsense
+    cam1_calib = calib_dict_RGBD_cam
     cam2_calib = calib_dict_stereo
 
     out_dir = out_dir / "relative_pose"
@@ -1165,7 +1168,7 @@ if __name__ == "__main__":
         cam1_calib=args.cam1_calib,
         cam2_calib=args.cam2_calib,
         output_path=args.output,
-        cam1_suffix="realsense",
+        cam1_suffix=rgbd_cam_suffix,
         cam2_suffix="left",
         debug=0,
         squares_horizontally=6, squares_vertically=8, squares_length=45.0, marker_length=31.0,

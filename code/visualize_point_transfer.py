@@ -8,8 +8,9 @@ import cv2
 import numpy as np
 
 from calibration.ChArUco.charuco_relative_pose_pnp import _get_undistort_function, load_camera_calibration
-from calibration.image import load_calib_data, load_yaml_calibration, get_undistort_function_mono
+from image import load_calib_data, load_yaml_calibration, get_undistort_function_mono
 from code.utils import load_dict
+from code.visualize_depth import colorize_depth
 
 
 def _read_camera_calibration(path: Path, use_undistored: bool = True) -> tuple[np.ndarray, np.ndarray]:
@@ -109,10 +110,13 @@ def _interactive_transfer_points(
 ) -> None:
     points = []  # ((u1, v1), depth, X1, (u2, v2), X2)
     depth_map = None if depth_map_path is None else np.load(depth_map_path)
+    vis_depth = None if depth_map is None else colorize_depth(depth_map)
+    panel_size = (640, 480)
 
     def redraw():
         vis1 = img1.copy()
         vis2 = img2.copy()
+        vis_depth_panel = None if vis_depth is None else vis_depth.copy()
 
         for idx, ((u1, v1), depth_m, _X1, (u2, v2), _X2) in enumerate(points):
             color1 = (0, 255, 255)
@@ -139,8 +143,33 @@ def _interactive_transfer_points(
                 color2,
                 2,
             )
-        vis1 = cv2.resize(vis1, (1280, 720))
-        vis2 = cv2.resize(vis2, (1280, 720))
+            if vis_depth_panel is not None:
+                cv2.circle(vis_depth_panel, (u1, v1), circle_radius, color1, 2)
+                cv2.putText(
+                    vis_depth_panel,
+                    f"{idx}: z={depth_m:.3f}m",
+                    (max(10, u1 + 10), max(25, v1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    color1,
+                    2,
+                )
+
+        vis1 = cv2.resize(vis1, panel_size)
+        vis2 = cv2.resize(vis2, panel_size)
+        if vis_depth_panel is not None:
+            vis_depth_panel = cv2.resize(vis_depth_panel, panel_size)
+            cv2.putText(
+                vis_depth_panel,
+                "Depth map",
+                (15, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.85,
+                (255, 255, 255),
+                2,
+            )
+            return np.hstack([vis1, vis2, vis_depth_panel])
+
         return np.hstack([vis1, vis2])
 
     def mouse_cb(event, x, y, _flags, _param):
@@ -148,8 +177,13 @@ def _interactive_transfer_points(
             return
 
         u, v = int(x), int(y)
-        if u >= img1.shape[1] or v >= img1.shape[0] or u < 0 or v < 0:
+        panel_w, panel_h = panel_size
+        if x < 0 or y < 0 or x >= panel_w or y >= panel_h:
             return
+        scale_x = img1.shape[1] / float(panel_w)
+        scale_y = img1.shape[0] / float(panel_h)
+        u = int(np.clip(round(x * scale_x), 0, img1.shape[1] - 1))
+        v = int(np.clip(round(y * scale_y), 0, img1.shape[0] - 1))
 
         try:
             if depth_map is not None:
@@ -181,7 +215,7 @@ def _interactive_transfer_points(
 
     window_name = "Mode A: click in LEFT panel (cam1) -> projected in RIGHT panel (cam2)"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(window_name, 1800, 900)
+    cv2.resizeWindow(window_name, 1280, 520)
     cv2.setMouseCallback(window_name, mouse_cb)
 
     print("Interactive mode A")
@@ -501,7 +535,7 @@ def _interactive_transfer_points_multi_targets(
             cv2.putText(vis, target['name'], (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
             panels.append(vis)
 
-        resized = [cv2.resize(panel, (960, 540)) for panel in panels]
+        resized = [cv2.resize(panel, (1800, 900)) for panel in panels]
         return np.hstack(resized)
 
     def mouse_cb(event, x, y, _flags, _param):
@@ -595,9 +629,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    parent_dir = Path(__file__).resolve().parents[1]
+    parent_dir = Path(__file__).resolve().parents[2]
 
-    date = "27032026"
+    date = "28032026"
 
     dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
     depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
@@ -620,9 +654,6 @@ def main() -> None:
     args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / f"{img_number}_realsense_depth.npy"
 
     args.mode == 'cam1_to_cam2'
-
-
-
     suffix1 = "realsense"
     suffix2 = "left"
 
@@ -631,8 +662,7 @@ def main() -> None:
 
     undistort_1 = _get_undistort_function(calib_dict_cam1, suffix1)
     undistort_2 = _get_undistort_function(calib_dict_cam2, suffix2)
-    # undistort_1 = None
-    # undistort_2 = None
+
     img1 = cv2.imread(str(args.image_cam1))
     if img1 is None:
         raise FileNotFoundError(f'Cannot read camera 1 image: {args.image_cam1}')

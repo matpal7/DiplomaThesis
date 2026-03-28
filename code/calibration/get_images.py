@@ -749,14 +749,351 @@ def save_cameras_on_click(
 
     cv2.destroyAllWindows()
 
+def save_repeated_scene_captures(
+        camara_index_left,
+        camera_index_right,
+        calib_dict=None,
+        frame_size_stereo=FRAME_SIZE_STEREO,
+        frame_size_realsense_rgb=FRAME_SIZE_REALSENSE,
+        frame_size_realsense_depth=FRAME_SIZE_REALSENSE,
+        frame_size_zed=FRAME_SIZE_ZED,
+        save_dir="dataset_default",
+        use_realsense=True,
+        use_zed=True,
+        squares_horizontally=6,
+        squares_vertically=8,
+        squares_length=32.0,
+        marker_length=22.0,
+        detect_board=True,
+        burst_count=10,
+):
+    """
+    SPACE  - capture new frame and show preview
+    S      - save currently displayed frame into current scene folder
+    F      - create a new scene folder and make it active
+    N      - capture and save burst_count frames into current scene folder
+    ESC/Q  - exit
+    """
+
+    _, board, detector = create_charuco_board(
+        squares_horizontally=squares_horizontally,
+        squares_vertically=squares_vertically,
+        squares_length=squares_length,
+        marker_length=marker_length,
+    )
+
+    frame_size_display = (480, 270)
+    os.makedirs(save_dir, exist_ok=True)
+
+    cap_l = opencv_open_camera(camara_index_left, frame_size_stereo)
+    cap_r = opencv_open_camera(camera_index_right, frame_size_stereo)
+
+    pipeline = None
+    align = None
+    depth_scale = None
+
+    if use_realsense:
+        pipeline = rs.pipeline()
+        config = rs.config()
+
+        config.enable_stream(
+            rs.stream.color,
+            frame_size_realsense_rgb[0],
+            frame_size_realsense_rgb[1],
+            rs.format.bgr8,
+            30,
+        )
+        config.enable_stream(
+            rs.stream.depth,
+            frame_size_realsense_depth[0],
+            frame_size_realsense_depth[1],
+            rs.format.z16,
+            30,
+        )
+
+        profile = pipeline.start(config)
+        depth_sensor = profile.get_device().first_depth_sensor()
+        depth_scale = depth_sensor.get_depth_scale()
+        print("Depth scale:", depth_scale)
+
+        for _ in range(10):
+            pipeline.wait_for_frames()
+
+        align = rs.align(rs.stream.color)
+
+    zed = None
+    if use_zed:
+        zed = _open_zed_camera(frame_size_zed=frame_size_zed, zed_depth_mode=sl.DEPTH_MODE.ULTRA)
+        if zed is None:
+            use_zed = False
+            print("Continuing without ZED stream.")
+
+    undistort_l, undistort_r = _get_omni_undistort_functions(calib_dict)
+
+    print("Controls:")
+    print("  SPACE - capture preview")
+    print("  S     - save current frame into active scene")
+    print("  F     - create new scene folder")
+    print("  N     - save burst into active scene")
+    print("  ESC/Q - exit")
+
+    last = {
+        "img_l_raw": None,
+        "img_r_raw": None,
+        "img_l_vis": None,
+        "img_r_vis": None,
+        "img_realsense": None,
+        "img_realsense_vis": None,
+        "depth_realsense": None,
+        "depth_realsense_colored": None,
+        "img_zed": None,
+        "img_zed_vis": None,
+        "depth_zed": None,
+        "depth_zed_colored": None,
+    }
+
+    def find_next_scene_index(base_dir: str) -> int:
+        existing = []
+        for name in os.listdir(base_dir):
+            full_path = os.path.join(base_dir, name)
+            if os.path.isdir(full_path) and name.startswith("scene_"):
+                try:
+                    existing.append(int(name.split("_")[1]))
+                except (IndexError, ValueError):
+                    pass
+        return 0 if not existing else max(existing) + 1
+
+    current_scene_idx = find_next_scene_index(save_dir)
+    current_scene_dir = None
+    current_rgb_dir = None
+    current_depth_dir = None
+    current_capture_idx = 0
+
+    def create_new_scene():
+        nonlocal current_scene_idx, current_scene_dir, current_rgb_dir, current_depth_dir, current_capture_idx
+
+        current_scene_dir = os.path.join(save_dir, f"scene_{current_scene_idx:03d}")
+        current_rgb_dir = os.path.join(current_scene_dir, "rgb")
+        current_depth_dir = os.path.join(current_scene_dir, "depth")
+
+        os.makedirs(current_rgb_dir, exist_ok=True)
+        os.makedirs(current_depth_dir, exist_ok=True)
+
+        current_capture_idx = 0
+        print(f"Created new scene folder: {current_scene_dir}")
+
+        current_scene_idx += 1
+
+    def capture_current_frames():
+        img_l = opencv_camera_capture(cap_l)
+        img_r = opencv_camera_capture(cap_r)
+
+        if img_l is None or img_r is None:
+            return False
+
+        img_l_raw = img_l.copy()
+        img_r_raw = img_r.copy()
+
+        if undistort_l is not None and undistort_r is not None:
+            img_l = undistort_l(img_l)
+            img_r = undistort_r(img_r)
+
+        img_l_vis = img_l.copy()
+        img_r_vis = img_r.copy()
+
+        if detect_board:
+            img_l_vis = detect_charuco_in_image_live(img_l_vis, board, detector)
+            img_r_vis = detect_charuco_in_image_live(img_r_vis, board, detector)
+
+        img_realsense = None
+        img_realsense_vis = None
+        depth_meters_realsense = None
+        depth_realsense_colored = None
+
+        if use_realsense:
+            rs_frames = pipeline.wait_for_frames()
+            rs_frames = align.process(rs_frames)
+
+            color_frame = rs_frames.get_color_frame()
+            depth_frame = rs_frames.get_depth_frame()
+
+            if not (color_frame and depth_frame):
+                print("Failed to capture RealSense frames")
+                return False
+
+            img_realsense = np.asanyarray(color_frame.get_data())
+            img_realsense_vis = img_realsense.copy()
+
+            if detect_board:
+                img_realsense_vis = detect_charuco_in_image_live(img_realsense_vis, board, detector)
+
+            depth_image = np.asanyarray(depth_frame.get_data())
+            depth_meters_realsense = depth_image.astype(np.float32) * depth_scale
+            depth_realsense_colored = colorize_depth(depth_meters_realsense, cv2.COLORMAP_TURBO)
+
+        img_zed = None
+        img_zed_vis = None
+        depth_zed = None
+        depth_zed_colored = None
+
+        if use_zed:
+            zed_img_mat = sl.Mat()
+            zed_depth_mat = sl.Mat()
+
+            if zed.grab() != sl.ERROR_CODE.SUCCESS:
+                print("Failed to capture ZED frames")
+                return False
+
+            zed.retrieve_image(zed_img_mat, sl.VIEW.LEFT)
+            zed.retrieve_measure(zed_depth_mat, sl.MEASURE.DEPTH)
+
+            img_zed = zed_img_mat.get_data()
+            img_zed = cv2.cvtColor(img_zed, cv2.COLOR_BGRA2BGR)
+            img_zed_vis = img_zed.copy()
+
+            if detect_board:
+                img_zed_vis = detect_charuco_in_image_live(img_zed_vis, board, detector)
+
+            depth_zed = zed_depth_mat.get_data().copy().astype(np.float32)
+            depth_zed_colored = colorize_depth(depth_zed, cv2.COLORMAP_TURBO)
+
+        last["img_l_raw"] = img_l_raw
+        last["img_r_raw"] = img_r_raw
+        last["img_l_vis"] = img_l_vis
+        last["img_r_vis"] = img_r_vis
+        last["img_realsense"] = img_realsense
+        last["img_realsense_vis"] = img_realsense_vis
+        last["depth_realsense"] = depth_meters_realsense
+        last["depth_realsense_colored"] = depth_realsense_colored
+        last["img_zed"] = img_zed
+        last["img_zed_vis"] = img_zed_vis
+        last["depth_zed"] = depth_zed
+        last["depth_zed_colored"] = depth_zed_colored
+
+        return True
+
+    def show_preview():
+        if last["img_l_vis"] is None or last["img_r_vis"] is None:
+            blank = np.zeros((frame_size_display[1], frame_size_display[0], 3), dtype=np.uint8)
+            cv2.imshow("Captured Frames", blank)
+            return
+
+        top_left = _make_labeled_tile(last["img_l_vis"], "Stereo Left", frame_size_display)
+        top_right = _make_labeled_tile(last["img_r_vis"], "Stereo Right", frame_size_display)
+
+        row_blocks = [cv2.hconcat([top_left, top_right])]
+
+        if use_realsense:
+            mid_left = _make_labeled_tile(last["img_realsense_vis"], "RealSense RGB", frame_size_display)
+            mid_right = _make_labeled_tile(last["depth_realsense_colored"], "RealSense Depth", frame_size_display)
+            row_blocks.append(cv2.hconcat([mid_left, mid_right]))
+
+        if use_zed:
+            bottom_left = _make_labeled_tile(last["img_zed_vis"], "ZED RGB", frame_size_display)
+            bottom_right = _make_labeled_tile(last["depth_zed_colored"], "ZED Depth", frame_size_display)
+            row_blocks.append(cv2.hconcat([bottom_left, bottom_right]))
+
+        preview = cv2.vconcat(row_blocks)
+
+        if current_scene_dir is not None:
+            cv2.putText(
+                preview,
+                f"Active scene: {os.path.basename(current_scene_dir)} | capture #{current_capture_idx:03d}",
+                (20, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+        cv2.imshow("Captured Frames", preview)
+
+    def save_current_frame_to_scene():
+        nonlocal current_capture_idx
+
+        if current_scene_dir is None:
+            print("No active scene. Press F first to create a scene folder.")
+            return False
+
+        if last["img_l_raw"] is None or last["img_r_raw"] is None:
+            print("No captured frame available. Press SPACE first.")
+            return False
+
+        idx = current_capture_idx
+
+        cv2.imwrite(os.path.join(current_rgb_dir, f"{idx:03d}_left.png"), last["img_l_raw"])
+        cv2.imwrite(os.path.join(current_rgb_dir, f"{idx:03d}_right.png"), last["img_r_raw"])
+
+        if use_realsense and last["img_realsense"] is not None:
+            cv2.imwrite(os.path.join(current_rgb_dir, f"{idx:03d}_realsense.png"), last["img_realsense"])
+        if use_realsense and last["depth_realsense"] is not None:
+            np.save(os.path.join(current_depth_dir, f"{idx:03d}_realsense_depth.npy"), last["depth_realsense"])
+
+        if use_zed and last["img_zed"] is not None:
+            cv2.imwrite(os.path.join(current_rgb_dir, f"{idx:03d}_zed.png"), last["img_zed"])
+        if use_zed and last["depth_zed"] is not None:
+            np.save(os.path.join(current_depth_dir, f"{idx:03d}_zed_depth.npy"), last["depth_zed"])
+
+        print(f"Saved capture {idx:03d} to {current_scene_dir}")
+        current_capture_idx += 1
+        return True
+
+    create_new_scene()
+    capture_current_frames()
+    show_preview()
+
+    while True:
+        key = cv2.waitKey(0) & 0xFF
+
+        if key == 27 or key == ord("q"):
+            break
+
+        elif key == 32:  # SPACE
+            if capture_current_frames():
+                show_preview()
+
+        elif key == ord("f"):
+            create_new_scene()
+            if capture_current_frames():
+                show_preview()
+
+        elif key == ord("s"):
+            save_current_frame_to_scene()
+
+        elif key == ord("n"):
+            if current_scene_dir is None:
+                print("No active scene. Press F first.")
+                continue
+
+            print(f"Capturing burst of {burst_count} frames into {current_scene_dir}")
+            for i in range(burst_count):
+                if capture_current_frames():
+                    save_current_frame_to_scene()
+                    show_preview()
+                else:
+                    print(f"Burst capture failed at index {i}")
+                    break
+
+    cap_l.release()
+    cap_r.release()
+
+    if use_realsense and pipeline is not None:
+        pipeline.stop()
+
+    if use_zed and zed is not None:
+        zed.close()
+
+    cv2.destroyAllWindows()
+
 if __name__ == '__main__':
     chessboard_size = (8,5)
-    parent_dir = Path(__file__).resolve().parents[2]
-    date = "27032026"
+    parent_dir = Path(__file__).resolve().parents[3]
+    date = "28032026"
 
     # calib_dir = load_dict(out_dir + "/calib_data.npy")
     dataset_dir = os.path.join(parent_dir, "datasets", f'dataset_{date}')
-    depth_dir = os.path.join(dataset_dir, 'stereo_4k_relative_pose')
+    depth_dir = os.path.join(dataset_dir, 'stereo_4k_calibration')
     print(depth_dir)
 
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
@@ -765,12 +1102,19 @@ if __name__ == '__main__':
     stereo_frame_size = frame_size_4K
     # stereo_frame_size = FRAME_SIZE_REALSENSE
 
-    save_cameras_on_click(4,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict,
+    save_cameras_on_click(3,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=False, use_zed=False, calib_dict=None,
                           squares_horizontally=6,
                           squares_vertically=8,
                           squares_length=45.0,
                           marker_length=31.0
                             )
+
+    # save_repeated_scene_captures(3,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict,
+    #                       squares_horizontally=6,
+    #                       squares_vertically=8,
+    #                       squares_length=45.0,
+    #                       marker_length=31.0
+    #                         )
 
     # #show_undistor   ed(depth_dir + "/rgb", calib_dir)
     # show_realsense_image_live()
