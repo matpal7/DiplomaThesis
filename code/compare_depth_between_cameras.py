@@ -7,6 +7,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_calibration
+from code.visualize_depth import colorize_depth
+
 
 def _read_camera_calibration(path: Path, use_undistorted: bool = True) -> tuple[np.ndarray, np.ndarray]:
     """Read K and D (or K_new and D_new) from OpenCV YAML/XML calibration file."""
@@ -14,7 +17,7 @@ def _read_camera_calibration(path: Path, use_undistorted: bool = True) -> tuple[
     if not fs.isOpened():
         raise FileNotFoundError(f"Cannot open calibration file: {path}")
 
-    key_k = "K_new" if use_undistorted else "K"
+    key_k = "new_K_l" if use_undistorted else "K"
     key_d = "D_new" if use_undistorted else "D"
 
     try:
@@ -205,32 +208,77 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Warp predicted depth from source camera to RGBD camera and compute depth metrics."
     )
-    parser.add_argument("--pred-depth", type=Path, required=True, help="Predicted/source depth .npy")
-    parser.add_argument("--gt-depth", type=Path, required=True, help="Ground-truth RGBD depth .npy")
-    parser.add_argument("--source-calib", type=Path, required=True, help="Source camera calibration YAML")
-    parser.add_argument("--target-calib", type=Path, required=True, help="Target (RGBD) camera calibration YAML")
-    parser.add_argument("--relative-pose", type=Path, required=True, help="YAML with T_cam2_cam1 (target<-source)")
+    # parser.add_argument("--pred-depth", type=Path, required=True, help="Predicted/source depth .npy")
+    # parser.add_argument("--gt-depth", type=Path, required=True, help="Ground-truth RGBD depth .npy")
+    # parser.add_argument("--source-calib", type=Path, required=True, help="Source camera calibration YAML")
+    # parser.add_argument("--target-calib", type=Path, required=True, help="Target (RGBD) camera calibration YAML")
+    # parser.add_argument("--relative-pose", type=Path, required=True, help="YAML with T_cam2_cam1 (target<-source)")
     parser.add_argument("--pred-depth-scale", type=float, default=1.0, help="Meters per unit in predicted depth")
-    parser.add_argument("--gt-depth-scale", type=float, default=0.001, help="Meters per unit in GT depth")
-    parser.add_argument("--source-use-undistorted", action="store_true", help="Use K_new/D_new for source")
-    parser.add_argument("--target-use-undistorted", action="store_true", help="Use K_new/D_new for target")
-    parser.add_argument("--out-json", type=Path, default=Path("out/depth_compare_metrics.json"))
-    parser.add_argument("--out-vis", type=Path, default=Path("out/depth_compare_visualization.png"))
+    # parser.add_argument("--gt-depth-scale", type=float, default=0.001, help="Meters per unit in GT depth")
+    # parser.add_argument("--source-use-undistorted", action="store_true", help="Use K_new/D_new for source")
+    # parser.add_argument("--target-use-undistorted", action="store_true", help="Use K_new/D_new for target")
+    # parser.add_argument("--out-json", type=Path, default=Path("out/depth_compare_metrics.json"))
+    # parser.add_argument("--out-vis", type=Path, default=Path("out/depth_compare_visualization.png"))
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    source_depth = np.load(args.pred_depth)
-    gt_depth = np.load(args.gt_depth)
+    parent_dir = Path(__file__).resolve().parents[2]
+
+    date = "28032026"
+    NNname = "FoundationStereo"
+
+    dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
+    depth_dir = dataset_dir / "stereo_4k_depth" / "rgb"
+    depth_estimation_dir = parent_dir / "out_estimation" / "stereo" / NNname / f"dataset_{date}" / "depth"
+    print(depth_estimation_dir)
+    print(depth_dir)
+    img_number = 0
+    args.image_cam1 = depth_dir / f"{img_number}_realsense.png"
+    args.image_cam2 = depth_dir / f"{img_number}_left.png"
+
+    out_dir = parent_dir / 'out' / f"out_{date}" / "cameras_parameters"
+
+    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
+    calib_dict_stereo = out_dir / "calib_data.npy"
+
+    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
+    args.cam1_calib = calib_dict_realsense
+    args.cam2_calib = calib_dict_stereo
+    depth_map_cam1 = dataset_dir / "stereo_4k_depth" / "depth" / f"{img_number}_realsense_depth.npy"
+    depth_map_cam2 = depth_estimation_dir / f"{img_number}_depth.npy"
+
+    frame_size = (960, 540)
+    depth_cam1 = np.load(depth_map_cam1)
+    depth_cam2 = np.load(depth_map_cam2)
+
+    vis1 = colorize_depth(depth_cam1)
+    vis2 = colorize_depth(depth_cam2)
+
+    vis1 = cv2.resize(vis1, frame_size)
+    vis2 = cv2.resize(vis2, frame_size)
+
+
+
+
+    source_depth = depth_cam2
+    gt_depth = depth_cam1
 
     if source_depth.ndim != 2 or gt_depth.ndim != 2:
         raise ValueError(f"Depth maps must be 2D, got source={source_depth.shape}, gt={gt_depth.shape}")
 
-    k_source, d_source = _read_camera_calibration(args.source_calib, use_undistorted=args.source_use_undistorted)
-    k_target, d_target = _read_camera_calibration(args.target_calib, use_undistorted=args.target_use_undistorted)
-    t_target_source = _read_transform(args.relative_pose)
+    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
+    calib_dict_stereo = out_dir / "calib_data.npy"
+    relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
+
+    k_source, d_source = load_camera_calibration(calib_dict_realsense)
+    k_target, d_target = load_camera_calibration(calib_dict_stereo, suffix="left")
+    from code.utils import scale_intrinsics
+    print((gt_depth.shape[1], gt_depth.shape[0]), (source_depth.shape[1], source_depth.shape[0]))
+    k_source = scale_intrinsics(k_source, (gt_depth.shape[1], gt_depth.shape[0]), (source_depth.shape[1], source_depth.shape[0]))
+    t_target_source = _read_transform(relative_pose)
 
     pred_warped_m, valid_pred = _forward_warp_depth(
         source_depth=source_depth,
@@ -243,18 +291,24 @@ def main() -> None:
         target_hw=(gt_depth.shape[0], gt_depth.shape[1]),
     )
 
+    vis_projected =  colorize_depth(pred_warped_m)
+    vis = cv2.hconcat([vis1, vis2])
+
+    cv2.imshow("Depth map Realsense " + NNname, vis_projected)
+    cv2.waitKey(0)
+
     metrics = _compute_metrics(pred_warped_m, gt_depth, args.gt_depth_scale, valid_pred)
-
-    args.out_json.parent.mkdir(parents=True, exist_ok=True)
-    with args.out_json.open("w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
-
-    _save_visualization(pred_warped_m, gt_depth, args.gt_depth_scale, valid_pred, args.out_vis)
-
-    print("=== Depth comparison (predicted source -> target RGBD) ===")
-    print(json.dumps(metrics, indent=2))
-    print(f"Metrics saved to: {args.out_json}")
-    print(f"Visualization saved to: {args.out_vis}")
+    #
+    # args.out_json.parent.mkdir(parents=True, exist_ok=True)
+    # with args.out_json.open("w", encoding="utf-8") as f:
+    #     json.dump(metrics, f, indent=2)
+    #
+    # _save_visualization(pred_warped_m, gt_depth, args.gt_depth_scale, valid_pred, args.out_vis)
+    #
+    # print("=== Depth comparison (predicted source -> target RGBD) ===")
+    # print(json.dumps(metrics, indent=2))
+    # print(f"Metrics saved to: {args.out_json}")
+    # print(f"Visualization saved to: {args.out_vis}")
 
 
 if __name__ == "__main__":
