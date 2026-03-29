@@ -797,7 +797,7 @@ def estimate_relative_pose(
     calib_dict_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)  # load_calib_data(cam2_calib, type=cam2_suffix)
     calib_stereo = load_dict(cam2_calib)
 
-    K_cam1, dist_cam1 = calib_dict_cam1["K"], calib_dict_cam1["D"]
+    K_cam1, dist_cam1 = calib_dict_cam1["K_new"], calib_dict_cam1["D_new"]
     # K_cam2, dist_cam2 = calib_dict_cam2["K"], calib_dict_cam2["D"]
 
     K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)
@@ -1139,7 +1139,7 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     parent_dir = Path(__file__).resolve().parents[4]
-    date = "28032026"
+    date = "27032026"
     dataset_dir = parent_dir / "datasets" / f'dataset_{date}'
     depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"

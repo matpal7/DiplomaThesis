@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 
 from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_calibration
+from code.utils import scale_intrinsics
+from code.visualize_depth import colorize_depth
 
 
 def _read_transform(path: Path) -> np.ndarray:
@@ -114,6 +116,7 @@ def warp_depth_to_target(
     fill_holes: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     points_source = _back_project_depth(source_depth, k_source, d_source, source_depth_scale)
+
     if points_source.shape[0] == 0:
         h, w = target_hw
         return np.zeros((h, w), dtype=np.float64), np.zeros((h, w), dtype=bool)
@@ -123,6 +126,11 @@ def warp_depth_to_target(
 
     front = points_target[:, 2] > 0
     points_target = points_target[front]
+
+    print("points_source count:", points_source.shape[0])
+    print("points_target count before front filter:", points_target.shape[0])
+    print("front count:", np.count_nonzero(front))
+
     if points_target.shape[0] == 0:
         h, w = target_hw
         return np.zeros((h, w), dtype=np.float64), np.zeros((h, w), dtype=bool)
@@ -136,24 +144,77 @@ def warp_depth_to_target(
     )
     uv = projected_pixels.reshape(-1, 2)
     z = points_target[:, 2]
+    print("uv min:", uv.min(axis=0))
+    print("uv max:", uv.max(axis=0))
+
+    h, w = target_hw
+    inside = (
+            (uv[:, 0] >= 0) & (uv[:, 0] < w) &
+            (uv[:, 1] >= 0) & (uv[:, 1] < h)
+    )
+
+    print("target_hw:", target_hw)
+    print("inside count:", int(np.count_nonzero(inside)))
+    print("inside ratio:", float(np.mean(inside)))
 
     projected, valid = _splat_depth(uv, z, target_hw)
+
+    print("valid after splat:", int(np.count_nonzero(valid)))
+    print("projected min/max valid z:",
+          float(projected[valid].min()) if np.any(valid) else None,
+          float(projected[valid].max()) if np.any(valid) else None)
 
     if fill_holes:
         projected, valid = _fill_small_holes(projected, valid)
 
+
+
     return projected, valid
 
 
+def estimate_depth_scale(source_depth, gt_depth_m):
+    valid = (
+        np.isfinite(source_depth) & (source_depth > 0) &
+        np.isfinite(gt_depth_m) & (gt_depth_m > 0)
+    )
+    if np.count_nonzero(valid) == 0:
+        raise ValueError("No valid overlapping pixels.")
+
+    s = np.median(gt_depth_m[valid] / source_depth[valid])
+    return float(s)
+
+def evaluate_scaled_depth(source_depth, gt_depth_m):
+    valid = (
+        np.isfinite(source_depth) & (source_depth > 0) &
+        np.isfinite(gt_depth_m) & (gt_depth_m > 0)
+    )
+    if np.count_nonzero(valid) == 0:
+        raise ValueError("No valid overlapping pixels.")
+
+    s = np.median(gt_depth_m[valid] / source_depth[valid])
+    source_scaled = source_depth * s
+
+    err = np.abs(source_scaled[valid] - gt_depth_m[valid])
+    mae = float(np.mean(err))
+    med = float(np.median(err))
+
+    return {
+        "scale": float(s),
+        "mae_m": mae,
+        "median_abs_error_m": med,
+    }
+
 def _compute_metrics(pred_target_m: np.ndarray, gt_target: np.ndarray, gt_depth_scale: float, valid_projected: np.ndarray) -> dict:
-    gt_target_m = gt_target.astype(np.float64) * gt_depth_scale
+    # gt_target_m = gt_target.astype(np.float64) * gt_depth_scale
+    result = evaluate_scaled_depth(pred_target_m, gt_target)
+    print(result)
 
     valid = (
         valid_projected
         & np.isfinite(pred_target_m)
-        & np.isfinite(gt_target_m)
+        & np.isfinite(gt_target)
         & (pred_target_m > 0)
-        & (gt_target_m > 0)
+        & (gt_target > 0)
     )
 
     n = int(np.count_nonzero(valid))
@@ -161,7 +222,7 @@ def _compute_metrics(pred_target_m: np.ndarray, gt_target: np.ndarray, gt_depth_
         return {"num_valid_pixels": 0}
 
     pred = pred_target_m[valid]
-    gt = gt_target_m[valid]
+    gt = gt_target[valid]
     diff = pred - gt
     abs_diff = np.abs(diff)
 
@@ -218,20 +279,27 @@ def _save_visualization(pred_m: np.ndarray, gt_raw: np.ndarray, gt_scale: float,
     out_png.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_png), panel)
 
+def resize_depth(depth: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
+    """
+    Resize depth map while preserving depth values.
+    target_hw = (H, W)
+    """
+    return cv2.resize(depth, target_hw, interpolation=cv2.INTER_NEAREST)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Warp depth from source camera to target camera and compare with target GT depth.")
-    parser.add_argument("--source-depth", type=Path, required=True, help="Source depth map (.npy)")
-    parser.add_argument("--target-depth", type=Path, required=True, help="Target/GT depth map (.npy)")
-    parser.add_argument("--source-calib", type=Path, required=True, help="Source camera calibration (.yaml/.yml/.npy)")
-    parser.add_argument("--target-calib", type=Path, required=True, help="Target camera calibration (.yaml/.yml/.npy)")
-    parser.add_argument("--source-suffix", type=str, default="left", help="Suffix when loading .npy stereo calib: left/right")
+    parser.add_argument("--source-depth", type=Path, required=False, help="Source depth map (.npy)")
+    parser.add_argument("--target-depth", type=Path, required=False, help="Target/GT depth map (.npy)")
+    parser.add_argument("--source-calib", type=Path, required=False, help="Source camera calibration (.yaml/.yml/.npy)")
+    parser.add_argument("--target-calib", type=Path, required=False, help="Target camera calibration (.yaml/.yml/.npy)")
+    parser.add_argument("--source-suffix", type=str, default="realsense", help="Suffix when loading .npy stereo calib: left/right")
     parser.add_argument("--target-suffix", type=str, default="left", help="Suffix when loading .npy stereo calib: left/right")
-    parser.add_argument("--relative-pose", type=Path, required=True, help="YAML with T_cam2_cam1 or T_cam1_cam2")
+    parser.add_argument("--relative-pose", type=Path, required=False, help="YAML with T_cam2_cam1 or T_cam1_cam2")
     parser.add_argument(
         "--pose-convention",
         choices=["target_from_source", "source_from_target"],
-        default="target_from_source",
+        default="source_from_target",
         help="How to interpret T_cam2_cam1 from --relative-pose.",
     )
     parser.add_argument("--source-depth-scale", type=float, default=1.0, help="Meters per unit in source depth map")
@@ -244,21 +312,84 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    # source Left
+    # target Realsense
 
-    source_depth = np.load(args.source_depth)
-    target_depth = np.load(args.target_depth)
+    parent_dir = Path(__file__).resolve().parents[2]
+
+    date = "27032026"
+    NNname = "FoundationStereo"
+
+    dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
+    depth_dir = dataset_dir / "stereo_4k_depth" / "rgb"
+    depth_estimation_dir = parent_dir / "out_estimation" / "stereo" / NNname / f"dataset_{date}" / "depth"
+    print(depth_estimation_dir)
+    print(depth_dir)
+    img_number = 4
+    args.image_cam1 = depth_dir / f"{img_number}_realsense.png"
+    args.image_cam2 = depth_dir / f"{img_number}_left.png"
+
+    out_dir = parent_dir / 'out' / f"out_{date}" / "cameras_parameters"
+
+    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
+    calib_dict_stereo = out_dir / "calib_data.npy"
+
+    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
+    args.cam1_calib = calib_dict_realsense
+    args.cam2_calib = calib_dict_stereo
+    source_depth = depth_estimation_dir / f"{img_number}_depth.npy"
+    target_depth =dataset_dir / "stereo_4k_depth" / "depth" / f"{img_number}_realsense_depth.npy"
+    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
+    calib_dict_stereo = out_dir / "calib_data.npy"
+    relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
+
+    source_depth = np.load(source_depth)
+    target_depth = np.load(target_depth)
+
+    frame_size = (960, 540)
+
+    vis1 = colorize_depth(source_depth)
+    vis2 = colorize_depth(target_depth)
+
+    vis1 = cv2.resize(vis1, frame_size)
+    vis2 = cv2.resize(vis2, frame_size)
+    vis = cv2.hconcat([vis1, vis2])
+    # cv2.imshow("Depth map Realsense " + NNname, vis)
+    # cv2.waitKey(0)
+
+    source_depth = resize_depth(source_depth, frame_size)
+    target_depth = resize_depth(target_depth, frame_size)
+
+    print("source_depth shape:", source_depth.shape)
+    print("target_depth shape:", target_depth.shape)
+
+    metrics = evaluate_scaled_depth(source_depth, target_depth)
+    scale = metrics["scale"]
+    print(metrics["scale"])
+
 
     if source_depth.ndim != 2 or target_depth.ndim != 2:
         raise ValueError(f"Depth maps must be 2D, got source={source_depth.shape}, target={target_depth.shape}")
 
-    k_source, d_source = load_camera_calibration(args.source_calib, suffix=args.source_suffix)
-    k_target, d_target = load_camera_calibration(args.target_calib, suffix=args.target_suffix)
+    k_source, d_source = load_camera_calibration(calib_dict_stereo, suffix="left")
+    k_source = scale_intrinsics(k_source, (3840, 2160), (960, 540))
 
-    t_cam2_cam1 = _read_transform(args.relative_pose)
+    k_target, d_target = load_camera_calibration(calib_dict_realsense)
+    k_target = scale_intrinsics(k_target, (1280, 720), (960, 540))
+
+    # k_source[0,0] *= scale
+    # k_source[1,1] *= scale
+    t_cam2_cam1 = _read_transform(relative_pose)
     if args.pose_convention == "target_from_source":
         t_target_source = t_cam2_cam1
     else:
         t_target_source = np.linalg.inv(t_cam2_cam1)
+
+    t_target_source[:3, 3] /= 1000.0
+    print("t_target_source:\n", t_target_source)
+    print("translation norm:", np.linalg.norm(t_target_source[:3, 3]))
+
+
 
     pred_warped_m, valid_pred = warp_depth_to_target(
         source_depth=source_depth,
@@ -267,10 +398,15 @@ def main() -> None:
         k_target=k_target,
         d_target=d_target,
         t_target_source=t_target_source,
-        source_depth_scale=args.source_depth_scale,
+        source_depth_scale=1.0,
         target_hw=(target_depth.shape[0], target_depth.shape[1]),
         fill_holes=not args.no_fill_holes,
     )
+
+    vis3 = colorize_depth(pred_warped_m)
+    vis = cv2.hconcat([vis1, vis2, vis3])
+    cv2.imshow("Depth map Realsense " + NNname, vis)
+    cv2.waitKey(0)
 
     metrics = _compute_metrics(pred_warped_m, target_depth, args.target_depth_scale, valid_pred)
 

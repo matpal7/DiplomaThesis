@@ -631,7 +631,7 @@ def main() -> None:
 
     parent_dir = Path(__file__).resolve().parents[2]
 
-    date = "28032026"
+    date = "27032026"
 
     dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
     depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"

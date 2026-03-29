@@ -9,7 +9,7 @@ import cv2
 import pyzed.sl as sl
 
 from ChArUco.charuco_detection import create_charuco_board, detect_charuco_in_image_live
-from code.calibration.image import get_undistort_functions
+from code.image import get_undistort_functions
 from code.utils import load_dict
 from code.visualize_depth import colorize_depth
 
