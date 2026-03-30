@@ -5,7 +5,7 @@ import cv2
 
 from code.calibration.ChArUco.charuco_relative_pose_pnp import find_images
 from code.calibration.calibrate_stereo import extract_chessboard_points
-from code.calibration.image import get_undistort_functions
+from code.image import get_undistort_functions
 from code.utils import get_l_r_image_fnames, load_dict
 
 CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)

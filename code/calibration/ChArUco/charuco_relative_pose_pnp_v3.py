@@ -797,13 +797,14 @@ def estimate_relative_pose(
     calib_dict_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)  # load_calib_data(cam2_calib, type=cam2_suffix)
     calib_stereo = load_dict(cam2_calib)
 
-    K_cam1, dist_cam1 = calib_dict_cam1["K_new"], calib_dict_cam1["D_new"]
+    K_cam1, dist_cam1 = calib_dict_cam1["K"], calib_dict_cam1["D"]
     # K_cam2, dist_cam2 = calib_dict_cam2["K"], calib_dict_cam2["D"]
 
     K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)
 
 
     undistort_1 = _get_undistort_function(calib_dict_cam1, cam1_suffix)
+    undistort_1 = None
     undistort_2 = _get_undistort_function(calib_stereo, cam2_suffix)
 
     print(f"Camera 1: {cam1_suffix}")

@@ -21,6 +21,7 @@ class Image:
         if img is None:
             raise FileNotFoundError(f"Cannot load image at path: {img_path}")
 
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         self.img = undistort_function(img) if undistort_function is not None else img
         self.dims = (self.img.shape[1], self.img.shape[0])
 
@@ -42,6 +43,9 @@ class Image:
     def get_resized_img(self, resolution):
         return cv2.resize(self.img, resolution, interpolation=cv2.INTER_AREA)
 
+    def get_dims(self):
+        return self.dims
+
 
 class ImageRGBD(Image):
     def __init__(self, img_path, undistort_function=None, undistort_depth=True):
@@ -61,6 +65,9 @@ class ImageRGBD(Image):
         depth_name = base.stem + "_depth.npy"
         depth_path = base.parent.parent / "depth" / depth_name
         return str(depth_path)
+
+    def get_depth(self):
+        return self.depth
 
 def load_calib_data(calib_file, type):
     allowed_types = {"left", "right", "mono", "zed", "realsense"}
@@ -135,7 +142,8 @@ def load_l_r_images_rectified(calib_dict, img_dir, max_imgs=None):
     return imgs_l, imgs_r
 
 def load_rgbd_images(img_dir, suffix="realsense", max_imgs=None):
-    fname_rgb = get_depth_rgb_image_fnames(img_dir, suffix=suffix, max_imgs=max_imgs)
+    rgbd_images = img_dir / "rgb"
+    fname_rgb = get_depth_rgb_image_fnames(rgbd_images, suffix=suffix, max_imgs=max_imgs)
     imgs_rgb = [ImageRGBD(fname) for fname in fname_rgb]
 
     return imgs_rgb

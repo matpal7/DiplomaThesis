@@ -40,7 +40,7 @@ def get_l_r_image_fnames(img_folder, max_imgs=None):
 
 def get_depth_rgb_image_fnames(img_folder, suffix="realsense", max_imgs=None):
     glob_string_d = f"{img_folder}/*_{suffix}.png"
-    images_d = sorted(glob.glob(glob_string_d))
+    images_d = sorted(glob.glob(glob_string_d), key=_idx)
 
     if max_imgs is not None:
         images_d = images_d[:max_imgs]
@@ -67,6 +67,22 @@ def scale_intrinsics(K: np.ndarray, old_size: tuple[int, int], new_size: tuple[i
     K_new[1, 2] *= sy  # cy
 
     return K_new
+
+
+def load_estimated_depth_map(out_dir: Path, NNname: str, date: str, max_imgs: int | None = None) -> list[np.ndarray]:
+    depth_maps_dir = out_dir / NNname / f"dataset_{date}" / "depth"
+
+    depth_paths = sorted(
+        depth_maps_dir.glob("*_depth.npy"),
+        key=lambda p: _idx(p.name)
+    )
+
+    if max_imgs is not None:
+        depth_paths = depth_paths[:max_imgs]
+
+    depth_maps = [np.load(p) for p in depth_paths]
+
+    return depth_maps
 
 
 

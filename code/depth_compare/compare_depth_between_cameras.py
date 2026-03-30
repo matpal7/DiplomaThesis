@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_calibration
-from code.utils import scale_intrinsics
+from code.depth_compare.save_diff_data import save_per_image_results, save_summary_results
+from code.image import load_yaml_calibration, get_undistort_function_mono, load_rgbd_images
+from code.utils import scale_intrinsics, load_estimated_depth_map
 from code.visualize_depth import colorize_depth
-
+logger = logging.getLogger(__name__)
 
 def _read_transform(path: Path) -> np.ndarray:
     """Read 4x4 transform from OpenCV YAML/XML file."""
@@ -113,7 +117,7 @@ def warp_depth_to_target(
     t_target_source: np.ndarray,
     source_depth_scale: float,
     target_hw: tuple[int, int],
-    fill_holes: bool,
+    fill_holes: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     points_source = _back_project_depth(source_depth, k_source, d_source, source_depth_scale)
 
@@ -127,9 +131,9 @@ def warp_depth_to_target(
     front = points_target[:, 2] > 0
     points_target = points_target[front]
 
-    print("points_source count:", points_source.shape[0])
-    print("points_target count before front filter:", points_target.shape[0])
-    print("front count:", np.count_nonzero(front))
+    logger.debug("points_source count: %d", points_source.shape[0])
+    logger.debug("points_target count before front filter: %d", points_target.shape[0])
+    logger.debug("front count: %d", np.count_nonzero(front))
 
     if points_target.shape[0] == 0:
         h, w = target_hw
@@ -144,8 +148,6 @@ def warp_depth_to_target(
     )
     uv = projected_pixels.reshape(-1, 2)
     z = points_target[:, 2]
-    print("uv min:", uv.min(axis=0))
-    print("uv max:", uv.max(axis=0))
 
     h, w = target_hw
     inside = (
@@ -153,16 +155,7 @@ def warp_depth_to_target(
             (uv[:, 1] >= 0) & (uv[:, 1] < h)
     )
 
-    print("target_hw:", target_hw)
-    print("inside count:", int(np.count_nonzero(inside)))
-    print("inside ratio:", float(np.mean(inside)))
-
     projected, valid = _splat_depth(uv, z, target_hw)
-
-    print("valid after splat:", int(np.count_nonzero(valid)))
-    print("projected min/max valid z:",
-          float(projected[valid].min()) if np.any(valid) else None,
-          float(projected[valid].max()) if np.any(valid) else None)
 
     if fill_holes:
         projected, valid = _fill_small_holes(projected, valid)
@@ -204,11 +197,7 @@ def evaluate_scaled_depth(source_depth, gt_depth_m):
         "median_abs_error_m": med,
     }
 
-def _compute_metrics(pred_target_m: np.ndarray, gt_target: np.ndarray, gt_depth_scale: float, valid_projected: np.ndarray) -> dict:
-    # gt_target_m = gt_target.astype(np.float64) * gt_depth_scale
-    result = evaluate_scaled_depth(pred_target_m, gt_target)
-    print(result)
-
+def _compute_metrics(pred_target_m: np.ndarray, gt_target: np.ndarray, valid_projected: np.ndarray) -> dict:
     valid = (
         valid_projected
         & np.isfinite(pred_target_m)
@@ -286,6 +275,30 @@ def resize_depth(depth: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
     """
     return cv2.resize(depth, target_hw, interpolation=cv2.INTER_NEAREST)
 
+def undistort_depth_map(depth: np.ndarray, calib_path: Path) -> np.ndarray:
+    """Undistort depth map using mono-camera undistortion maps."""
+    calib = load_yaml_calibration(calib_path)
+    undistort = get_undistort_function_mono(calib)
+
+    depth32 = depth.astype(np.float32)
+    depth_undist = undistort(depth32)
+
+    # Keep invalid regions as zeros after remap.
+    invalid = ~np.isfinite(depth_undist)
+    depth_undist[invalid] = 0.0
+    return depth_undist.astype(depth.dtype, copy=False)
+
+def create_comparison_visualization(
+    depth_gt: np.ndarray,
+    depth_est: np.ndarray,
+    pred_warped_m: np.ndarray,
+) -> np.ndarray:
+    vis_gt = colorize_depth(depth_gt)
+    vis_est = colorize_depth(depth_est)
+    vis_warped = colorize_depth(pred_warped_m)
+
+    return cv2.hconcat([vis_gt, vis_est, vis_warped])
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Warp depth from source camera to target camera and compare with target GT depth.")
@@ -310,117 +323,133 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    # source Left
-    # target Realsense
-
-    parent_dir = Path(__file__).resolve().parents[2]
-
-    date = "27032026"
-    NNname = "FoundationStereo"
-
+def run_depth_comparison_experiment(
+    parent_dir: Path,
+    date: str,
+    nn_name: str,
+    rgbd_camera_suffix: str = "realsense",
+    max_imgs: int = None,
+    pose_convention: str = "source_from_target",
+    debug: int = 0,
+) -> None:
     dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
     depth_dir = dataset_dir / "stereo_4k_depth" / "rgb"
-    depth_estimation_dir = parent_dir / "out_estimation" / "stereo" / NNname / f"dataset_{date}" / "depth"
-    print(depth_estimation_dir)
-    print(depth_dir)
-    img_number = 4
-    args.image_cam1 = depth_dir / f"{img_number}_realsense.png"
-    args.image_cam2 = depth_dir / f"{img_number}_left.png"
-
-    out_dir = parent_dir / 'out' / f"out_{date}" / "cameras_parameters"
-
-    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
-    calib_dict_stereo = out_dir / "calib_data.npy"
-
-    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
-    args.cam1_calib = calib_dict_realsense
-    args.cam2_calib = calib_dict_stereo
-    source_depth = depth_estimation_dir / f"{img_number}_depth.npy"
-    target_depth =dataset_dir / "stereo_4k_depth" / "depth" / f"{img_number}_realsense_depth.npy"
-    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
-    calib_dict_stereo = out_dir / "calib_data.npy"
-    relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
-
-    source_depth = np.load(source_depth)
-    target_depth = np.load(target_depth)
-
-    frame_size = (960, 540)
-
-    vis1 = colorize_depth(source_depth)
-    vis2 = colorize_depth(target_depth)
-
-    vis1 = cv2.resize(vis1, frame_size)
-    vis2 = cv2.resize(vis2, frame_size)
-    vis = cv2.hconcat([vis1, vis2])
-    # cv2.imshow("Depth map Realsense " + NNname, vis)
-    # cv2.waitKey(0)
-
-    source_depth = resize_depth(source_depth, frame_size)
-    target_depth = resize_depth(target_depth, frame_size)
-
-    print("source_depth shape:", source_depth.shape)
-    print("target_depth shape:", target_depth.shape)
-
-    metrics = evaluate_scaled_depth(source_depth, target_depth)
-    scale = metrics["scale"]
-    print(metrics["scale"])
+    depth_estimation_dir = parent_dir / "out_estimation"
+    out_dir = parent_dir / 'out'
+    out_dir_camera_parameters = out_dir/ f"out_{date}" / "cameras_parameters"
+    out_dir_depth_results = out_dir / f"out_{date}" / "depth_comparison" / rgbd_camera_suffix / nn_name
 
 
-    if source_depth.ndim != 2 or target_depth.ndim != 2:
-        raise ValueError(f"Depth maps must be 2D, got source={source_depth.shape}, target={target_depth.shape}")
+    calib_dict_realsense = out_dir_camera_parameters / "realsense_calibration_1280x720.yaml"
+    calib_dict_stereo = out_dir_camera_parameters / "calib_data.npy"
+    relative_pose_path = out_dir_camera_parameters / "relative_pose" / f"relative_pose_{rgbd_camera_suffix}_to_left_v3.yaml"
+
+    gt_data_dir = dataset_dir / "stereo_4k_depth"
+
+
+    imgs_rgb = load_rgbd_images(gt_data_dir, suffix=rgbd_camera_suffix, max_imgs=max_imgs)
+    estimated_depth_maps = load_estimated_depth_map(depth_estimation_dir, nn_name, date=date, max_imgs=max_imgs)
+    frame_size = estimated_depth_maps[0].shape[::-1]
+    logger.debug(f"NN frame size: {frame_size}")
 
     k_source, d_source = load_camera_calibration(calib_dict_stereo, suffix="left")
-    k_source = scale_intrinsics(k_source, (3840, 2160), (960, 540))
+    k_source = scale_intrinsics(k_source, (3840, 2160), frame_size)
 
     k_target, d_target = load_camera_calibration(calib_dict_realsense)
-    k_target = scale_intrinsics(k_target, (1280, 720), (960, 540))
+    k_target = scale_intrinsics(k_target, (1280, 720), frame_size)
 
-    # k_source[0,0] *= scale
-    # k_source[1,1] *= scale
-    t_cam2_cam1 = _read_transform(relative_pose)
-    if args.pose_convention == "target_from_source":
-        t_target_source = t_cam2_cam1
+    relative_transform = _read_transform(relative_pose_path)
+    if pose_convention == "target_from_source":
+        transform_target_from_source = relative_transform
     else:
-        t_target_source = np.linalg.inv(t_cam2_cam1)
+        transform_target_from_source = np.linalg.inv(relative_transform)
 
-    t_target_source[:3, 3] /= 1000.0
-    print("t_target_source:\n", t_target_source)
-    print("translation norm:", np.linalg.norm(t_target_source[:3, 3]))
+    transform_target_from_source[:3, 3] /= 1000.0
+    norm = np.linalg.norm(transform_target_from_source[:3, 3])
+    logger.debug(f"translation norm: {norm}")
 
+    all_metrics = []
 
+    for img_gt, depth_est in tqdm(zip(imgs_rgb, estimated_depth_maps), desc="evaluating depth estimation"):
+        image_number = img_gt.get_image_number()
+        depth_est = depth_est
+        depth_gt = img_gt.get_depth()
+        # target_depth = undistort_depth_map(target_depth, calib_dict_realsense)
 
-    pred_warped_m, valid_pred = warp_depth_to_target(
-        source_depth=source_depth,
-        k_source=k_source,
-        d_source=d_source,
-        k_target=k_target,
-        d_target=d_target,
-        t_target_source=t_target_source,
-        source_depth_scale=1.0,
-        target_hw=(target_depth.shape[0], target_depth.shape[1]),
-        fill_holes=not args.no_fill_holes,
+        vis1 = colorize_depth(depth_gt)
+        vis2 = colorize_depth(depth_est)
+
+        vis1 = cv2.resize(vis1, frame_size)
+        vis2 = cv2.resize(vis2, frame_size)
+
+        depth_est = resize_depth(depth_est, frame_size)
+        depth_gt = resize_depth(depth_gt, frame_size)
+
+        if depth_est.ndim != 2 or depth_est.ndim != 2:
+            raise ValueError(f"Depth maps must be 2D, got source={depth_est.shape}, target={depth_est.shape}")
+
+        pred_warped_m, valid_pred = warp_depth_to_target(
+            source_depth=depth_est,
+            k_source=k_source,
+            d_source=d_source,
+            k_target=k_target,
+            d_target=d_target,
+            t_target_source=transform_target_from_source,
+            source_depth_scale=1.0,
+            target_hw=(depth_gt.shape[0], depth_gt.shape[1]),
+        )
+
+        vis3 = colorize_depth(pred_warped_m)
+        vis = cv2.hconcat([vis1, vis2, vis3])
+        if debug > 0:
+            cv2.imshow(f"Depth map {rgbd_camera_suffix} | {nn_name}", vis)
+            cv2.waitKey(0)
+
+        metrics = _compute_metrics(pred_warped_m, depth_gt, valid_pred)
+        metrics_with_id = {
+            "image_id": image_number,
+            **metrics,
+        }
+
+        comparison_vis = create_comparison_visualization(
+            depth_gt=depth_gt,
+            depth_est=depth_est,
+            pred_warped_m=pred_warped_m,
+        )
+
+        save_per_image_results(
+            out_root=out_dir_depth_results,
+            image_id=image_number,
+            pred_warped_m=pred_warped_m,
+            gt_depth_m=depth_gt,
+            depth_est_m=depth_est,
+            valid_mask=valid_pred,
+            metrics=metrics_with_id,
+            comparison_vis=comparison_vis,
+        )
+
+        all_metrics.append(metrics_with_id)
+
+    save_summary_results(
+        out_root=out_dir_depth_results,
+        all_metrics=all_metrics,
     )
 
-    vis3 = colorize_depth(pred_warped_m)
-    vis = cv2.hconcat([vis1, vis2, vis3])
-    cv2.imshow("Depth map Realsense " + NNname, vis)
-    cv2.waitKey(0)
-
-    metrics = _compute_metrics(pred_warped_m, target_depth, args.target_depth_scale, valid_pred)
-
-    args.out_json.parent.mkdir(parents=True, exist_ok=True)
-    with args.out_json.open("w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
-
-    _save_visualization(pred_warped_m, target_depth, args.target_depth_scale, valid_pred, args.out_vis)
-
-    print("=== Depth comparison (source -> target) ===")
-    print(json.dumps(metrics, indent=2))
-    print(f"Metrics saved to: {args.out_json}")
-    print(f"Visualization saved to: {args.out_vis}")
 
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO)
+    parent_dir = Path(__file__).resolve().parents[3]
+    date = "27032026"
+    nn_name = "DepthAnything3_stereo"
+    # NNname = "FoundationStereo"
+    debug = 0
+    rgbd_camera_suffix = "zed"
+    max_imgs = 7
+    run_depth_comparison_experiment(
+        parent_dir,
+        date=date,
+        nn_name=nn_name,
+        rgbd_camera_suffix = rgbd_camera_suffix,
+        max_imgs=max_imgs
+    )
