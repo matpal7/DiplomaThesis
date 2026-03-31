@@ -14,10 +14,11 @@ from code.depth_compare.save_diff_data import save_per_image_results, save_summa
 from code.image import load_yaml_calibration, get_undistort_function_mono, load_rgbd_images
 from code.utils import scale_intrinsics, load_estimated_depth_map
 from code.visualize_depth import colorize_depth
+from prepare_paths import prepare_depth_comparison_paths
+
 logger = logging.getLogger(__name__)
 
-def _read_transform(path: Path) -> np.ndarray:
-    """Read 4x4 transform from OpenCV YAML/XML file."""
+def _read_transform(path: Path, direction: str = "cam2_from_cam1") -> np.ndarray:
     fs = cv2.FileStorage(str(path), cv2.FILE_STORAGE_READ)
     if not fs.isOpened():
         raise FileNotFoundError(f"Cannot open transform file: {path}")
@@ -33,17 +34,25 @@ def _read_transform(path: Path) -> np.ndarray:
 
     if t_cam2_cam1 is not None:
         t_cam2_cam1 = np.asarray(t_cam2_cam1, dtype=np.float64)
+        if t_cam2_cam1.shape != (4, 4):
+            raise ValueError(f"Expected 4x4 T_cam2_cam1 in {path}, got {t_cam2_cam1.shape}.")
+
     if t_cam1_cam2 is not None:
         t_cam1_cam2 = np.asarray(t_cam1_cam2, dtype=np.float64)
+        if t_cam1_cam2.shape != (4, 4):
+            raise ValueError(f"Expected 4x4 T_cam1_cam2 in {path}, got {t_cam1_cam2.shape}.")
 
-    if t_cam2_cam1 is not None and t_cam2_cam1.shape != (4, 4):
-        raise ValueError(f"Expected 4x4 T_cam2_cam1 in {path}, got {t_cam2_cam1.shape}.")
-    if t_cam1_cam2 is not None and t_cam1_cam2.shape != (4, 4):
-        raise ValueError(f"Expected 4x4 T_cam1_cam2 in {path}, got {t_cam1_cam2.shape}.")
+    if direction == "cam2_from_cam1":
+        if t_cam2_cam1 is not None:
+            return t_cam2_cam1
+        return np.linalg.inv(t_cam1_cam2)
 
-    if t_cam2_cam1 is not None:
-        return t_cam2_cam1
-    return np.linalg.inv(t_cam1_cam2)
+    if direction == "cam1_from_cam2":
+        if t_cam1_cam2 is not None:
+            return t_cam1_cam2
+        return np.linalg.inv(t_cam2_cam1)
+
+    raise ValueError(f"Unsupported direction: {direction}")
 
 
 def _back_project_depth(depth: np.ndarray, k: np.ndarray, d: np.ndarray, depth_scale: float) -> np.ndarray:
@@ -311,8 +320,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--relative-pose", type=Path, required=False, help="YAML with T_cam2_cam1 or T_cam1_cam2")
     parser.add_argument(
         "--pose-convention",
-        choices=["target_from_source", "source_from_target"],
-        default="source_from_target",
+        choices=["cam1_from_cam2", "cam2_from_cam1"],
+        default="cam1_from_cam2",
         help="How to interpret T_cam2_cam1 from --relative-pose.",
     )
     parser.add_argument("--source-depth-scale", type=float, default=1.0, help="Meters per unit in source depth map")
@@ -329,22 +338,11 @@ def run_depth_comparison_experiment(
     nn_name: str,
     rgbd_camera_suffix: str = "realsense",
     max_imgs: int = None,
-    pose_convention: str = "source_from_target",
+    pose_convention: str = "cam1_from_cam2",  #T_rgbd_from_left
     debug: int = 0,
 ) -> None:
-    dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
-    depth_dir = dataset_dir / "stereo_4k_depth" / "rgb"
-    depth_estimation_dir = parent_dir / "out_estimation"
-    out_dir = parent_dir / 'out'
-    out_dir_camera_parameters = out_dir/ f"out_{date}" / "cameras_parameters"
-    out_dir_depth_results = out_dir / f"out_{date}" / "depth_comparison" / rgbd_camera_suffix / nn_name
 
-
-    calib_dict_realsense = out_dir_camera_parameters / "realsense_calibration_1280x720.yaml"
-    calib_dict_stereo = out_dir_camera_parameters / "calib_data.npy"
-    relative_pose_path = out_dir_camera_parameters / "relative_pose" / f"relative_pose_{rgbd_camera_suffix}_to_left_v3.yaml"
-
-    gt_data_dir = dataset_dir / "stereo_4k_depth"
+    gt_data_dir, relative_pose_path, calib_rgbd_path, calib_stereo_path, depth_estimation_dir, depth_comparison_dir=prepare_depth_comparison_paths(parent_dir, date, rgbd_camera_suffix, nn_name)
 
 
     imgs_rgb = load_rgbd_images(gt_data_dir, suffix=rgbd_camera_suffix, max_imgs=max_imgs)
@@ -352,17 +350,13 @@ def run_depth_comparison_experiment(
     frame_size = estimated_depth_maps[0].shape[::-1]
     logger.debug(f"NN frame size: {frame_size}")
 
-    k_source, d_source = load_camera_calibration(calib_dict_stereo, suffix="left")
+    k_source, d_source = load_camera_calibration(calib_stereo_path, suffix="left")
     k_source = scale_intrinsics(k_source, (3840, 2160), frame_size)
 
-    k_target, d_target = load_camera_calibration(calib_dict_realsense)
+    k_target, d_target = load_camera_calibration(calib_rgbd_path)
     k_target = scale_intrinsics(k_target, (1280, 720), frame_size)
 
-    relative_transform = _read_transform(relative_pose_path)
-    if pose_convention == "target_from_source":
-        transform_target_from_source = relative_transform
-    else:
-        transform_target_from_source = np.linalg.inv(relative_transform)
+    transform_target_from_source = _read_transform(relative_pose_path, pose_convention)
 
     transform_target_from_source[:3, 3] /= 1000.0
     norm = np.linalg.norm(transform_target_from_source[:3, 3])
@@ -418,7 +412,7 @@ def run_depth_comparison_experiment(
         )
 
         save_per_image_results(
-            out_root=out_dir_depth_results,
+            out_root=depth_comparison_dir,
             image_id=image_number,
             pred_warped_m=pred_warped_m,
             gt_depth_m=depth_gt,
@@ -431,7 +425,7 @@ def run_depth_comparison_experiment(
         all_metrics.append(metrics_with_id)
 
     save_summary_results(
-        out_root=out_dir_depth_results,
+        out_root=depth_comparison_dir,
         all_metrics=all_metrics,
     )
 

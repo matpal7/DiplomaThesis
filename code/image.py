@@ -46,6 +46,9 @@ class Image:
     def get_dims(self):
         return self.dims
 
+    def get_img(self):
+        return self.img
+
 
 class ImageRGBD(Image):
     def __init__(self, img_path, undistort_function=None, undistort_depth=True):

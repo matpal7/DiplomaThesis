@@ -208,6 +208,145 @@ def calibrate_camera_from_images(image_paths, out_dir, file_name="calib_data.npy
 
     return ret, K, dist, rvecs, tvecs
 
+def _draw_charuco_points(
+    image: np.ndarray,
+    charuco_corners: np.ndarray | None,
+    charuco_ids: np.ndarray | None,
+    marker_corners=None,
+    marker_ids=None,
+    title: str = "",
+) -> np.ndarray:
+    vis = image.copy()
+
+    if marker_ids is not None and marker_corners is not None and len(marker_ids) > 0:
+        vis = cv2.aruco.drawDetectedMarkers(vis, marker_corners, marker_ids)
+
+    if charuco_ids is not None and charuco_corners is not None and len(charuco_ids) > 0:
+        for corner, cid in zip(charuco_corners.reshape(-1, 2), charuco_ids.flatten()):
+            x, y = int(round(corner[0])), int(round(corner[1]))
+            cv2.circle(vis, (x, y), 5, (0, 255, 255), 2)
+            cv2.putText(
+                vis,
+                str(int(cid)),
+                (x + 6, y - 6),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                29,
+                cv2.LINE_AA,
+            )
+
+    if title:
+        cv2.putText(
+            vis,
+            title,
+            (20, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    return vis
+
+def draw_charuco_correspondences(
+    image1: np.ndarray,
+    charuco_corners1: np.ndarray | None,
+    charuco_ids1: np.ndarray | None,
+    image2: np.ndarray,
+    charuco_corners2: np.ndarray | None,
+    charuco_ids2: np.ndarray | None,
+    title: str = "ChArUco correspondences",
+) -> np.ndarray:
+    vis1 = image1.copy()
+    vis2 = image2.copy()
+
+    vis1, vis2 = _resize_to_same_height(vis1, vis2)
+    scale1_x = vis1.shape[1] / image1.shape[1]
+    scale1_y = vis1.shape[0] / image1.shape[0]
+    scale2_x = vis2.shape[1] / image2.shape[1]
+    scale2_y = vis2.shape[0] / image2.shape[0]
+
+    canvas = cv2.hconcat([vis1, vis2])
+    offset_x = vis1.shape[1]
+
+    if (
+        charuco_ids1 is None or charuco_corners1 is None or
+        charuco_ids2 is None or charuco_corners2 is None
+    ):
+        cv2.putText(
+            canvas,
+            title,
+            (20, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return canvas
+
+    pts1 = {
+        int(cid): (
+            int(round(pt[0] * scale1_x)),
+            int(round(pt[1] * scale1_y)),
+        )
+        for pt, cid in zip(charuco_corners1.reshape(-1, 2), charuco_ids1.flatten())
+    }
+
+    pts2 = {
+        int(cid): (
+            int(round(pt[0] * scale2_x)) + offset_x,
+            int(round(pt[1] * scale2_y)),
+        )
+        for pt, cid in zip(charuco_corners2.reshape(-1, 2), charuco_ids2.flatten())
+    }
+
+    common_ids = sorted(set(pts1.keys()) & set(pts2.keys()))
+
+    for cid in common_ids:
+        p1 = pts1[cid]
+        p2 = pts2[cid]
+
+        cv2.circle(canvas, p1, 5, (0, 255, 255), 2)
+        cv2.circle(canvas, p2, 5, (255, 0, 255), 2)
+        cv2.line(canvas, p1, p2, (255, 255, 0), 1, cv2.LINE_AA)
+
+        cv2.putText(
+            canvas,
+            str(cid),
+            (p1[0] + 5, p1[1] - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            canvas,
+            str(cid),
+            (p2[0] + 5, p2[1] - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+
+    cv2.putText(
+        canvas,
+        f"{title} | common corners: {len(common_ids)}",
+        (20, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    return canvas
+
 
 def main():
     parent_dir = Path(__file__).resolve().parent.parent.parent
