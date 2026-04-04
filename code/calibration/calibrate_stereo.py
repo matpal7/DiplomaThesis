@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 
-from code.calibration.image import get_undistort_functions
+from code.image import get_undistort_functions
 from code.calibration.undistored_images import show_undistorted_images
 from code.utils import get_l_r_image_fnames, load_dict, save_dict
 

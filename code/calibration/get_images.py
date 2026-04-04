@@ -1089,7 +1089,7 @@ def save_repeated_scene_captures(
 if __name__ == '__main__':
     chessboard_size = (8,5)
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "28032026"
+    date = "02042026"
 
     # calib_dir = load_dict(out_dir + "/calib_data.npy")
     dataset_dir = os.path.join(parent_dir, "datasets", f'dataset_{date}')
@@ -1097,24 +1097,24 @@ if __name__ == '__main__':
     print(depth_dir)
 
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
-    calib_dict = load_dict(out_dir / "calib_data.npy")
+    # calib_dict = load_dict(out_dir / "calib_data.npy")
+    #
+    # stereo_frame_size = frame_size_4K
+    stereo_frame_size = FRAME_SIZE_REALSENSE
 
-    stereo_frame_size = frame_size_4K
-    # stereo_frame_size = FRAME_SIZE_REALSENSE
-
-    save_cameras_on_click(3,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=False, use_zed=False, calib_dict=None,
-                          squares_horizontally=6,
-                          squares_vertically=8,
-                          squares_length=45.0,
-                          marker_length=31.0
-                            )
-
-    # save_repeated_scene_captures(3,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict,
+    # save_cameras_on_click(2,2, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=None,
     #                       squares_horizontally=6,
     #                       squares_vertically=8,
     #                       squares_length=45.0,
     #                       marker_length=31.0
     #                         )
+
+    save_repeated_scene_captures(2,2, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=None,
+                          squares_horizontally=6,
+                          squares_vertically=8,
+                          squares_length=45.0,
+                          marker_length=31.0
+                            )
 
     # #show_undistor   ed(depth_dir + "/rgb", calib_dir)
     # show_realsense_image_live()

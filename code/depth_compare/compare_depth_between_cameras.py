@@ -220,21 +220,17 @@ def _compute_metrics(pred_target_m: np.ndarray, gt_target: np.ndarray, valid_pro
         return {"num_valid_pixels": 0}
 
     pred = pred_target_m[valid]
-    gt = gt_target[valid]
+    gt   = gt_target[valid]
     diff = pred - gt
     abs_diff = np.abs(diff)
 
     return {
-        "num_valid_pixels": n,
-        "mae_m": float(np.mean(abs_diff)),
-        "rmse_m": float(np.sqrt(np.mean(diff ** 2))),
-        "median_abs_error_m": float(np.median(abs_diff)),
-        "abs_rel": float(np.mean(abs_diff / np.maximum(gt, 1e-8))),
-        "delta_1_25": float(np.mean(np.maximum(pred / gt, gt / pred) < 1.25)),
-        "delta_1_25_sq": float(np.mean(np.maximum(pred / gt, gt / pred) < 1.25 ** 2)),
-        "delta_1_25_cu": float(np.mean(np.maximum(pred / gt, gt / pred) < 1.25 ** 3)),
+        "num_valid_pixels":      n,                                                              # kept for diagnostics only
+        "abs_rel":               float(np.mean(abs_diff / np.maximum(gt, 1e-8))),               # primary error ↓
+        "rmse_m":                float(np.sqrt(np.mean(diff ** 2))),                             # absolute error ↓
+        "median_abs_error_m":    float(np.median(abs_diff)),                                     # robust typical error ↓
+        "delta_1_25":            float(np.mean(np.maximum(pred / gt, gt / pred) < 1.25)),        # primary accuracy ↑
     }
-
 
 def _colorize_depth(depth_m: np.ndarray, valid: np.ndarray, max_depth_m: float) -> np.ndarray:
     d = depth_m.astype(np.float32).copy()
@@ -301,12 +297,84 @@ def create_comparison_visualization(
     depth_gt: np.ndarray,
     depth_est: np.ndarray,
     pred_warped_m: np.ndarray,
+    valid_pred: np.ndarray,
+    metrics: dict = None,
 ) -> np.ndarray:
-    vis_gt = colorize_depth(depth_gt)
-    vis_est = colorize_depth(depth_est)
-    vis_warped = colorize_depth(pred_warped_m)
+    # ── shared depth range ────────────────────────────────────────────────────
+    valid_gt  = np.isfinite(depth_gt)      & (depth_gt      > 0)
+    valid_est = np.isfinite(depth_est)     & (depth_est     > 0)
+    valid_w   = np.isfinite(pred_warped_m) & (pred_warped_m > 0)
 
-    return cv2.hconcat([vis_gt, vis_est, vis_warped])
+    all_vals = np.concatenate([
+        depth_gt[valid_gt], depth_est[valid_est], pred_warped_m[valid_w],
+    ])
+    shared_vmin = float(np.percentile(all_vals, 2))  if len(all_vals) else 0.0
+    shared_vmax = float(np.percentile(all_vals, 98)) if len(all_vals) else 5.0
+
+    vis_gt     = colorize_depth(depth_gt,     vmin=shared_vmin, vmax=shared_vmax)
+    vis_est    = colorize_depth(depth_est,     vmin=shared_vmin, vmax=shared_vmax)
+    vis_warped = colorize_depth(pred_warped_m, vmin=shared_vmin, vmax=shared_vmax)
+    vis_error  = create_error_heatmap(pred_warped_m, depth_gt, valid_pred)
+
+    # ── scale all panels to same height ──────────────────────────────────────
+    def resize_h(img, h):
+        s = h / img.shape[0]
+        return cv2.resize(img, (int(img.shape[1] * s), h), interpolation=cv2.INTER_AREA)
+
+    panel_h = vis_gt.shape[0]
+    vis_gt     = resize_h(vis_gt,     panel_h)
+    vis_est    = resize_h(vis_est,    panel_h)
+    vis_warped = resize_h(vis_warped, panel_h)
+    vis_error  = resize_h(vis_error,  panel_h)
+
+    # ── label helper: white text with black outline ───────────────────────────
+    def _label(img, text, y=28):
+        out = img.copy()
+        cv2.putText(out, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (0, 0, 0),       2, cv2.LINE_AA)
+        cv2.putText(out, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (255, 255, 255), 1, cv2.LINE_AA)
+        return out
+
+    top_row = cv2.hconcat([
+        _label(vis_gt,     "GT depth"),
+        _label(vis_est,    "Estimated depth"),
+        _label(vis_warped, "Warped to GT frame"),
+    ])
+
+    # metrics text on its own line at top of error panel (y=28)
+    # "worst regions" label at a different y to avoid overlap
+    err_panel = vis_error.copy()
+    if metrics:
+        txt = (f"AbsRel={metrics.get('abs_rel', 0):.3f}  "
+               f"MAE={metrics.get('mae_m', 0):.3f}m  "
+               f"d1={metrics.get('delta_1_25', 0)*100:.1f}%")
+        cv2.putText(err_panel, txt, (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65, (0, 0, 0),     2, cv2.LINE_AA)
+        cv2.putText(err_panel, txt, (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65, (0, 230, 0),   1, cv2.LINE_AA)
+
+    cv2.putText(err_panel, "Error |warped - GT|  (circles = worst regions)",
+                (10, 54), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (0, 0, 0),     2, cv2.LINE_AA)
+    cv2.putText(err_panel, "Error |warped - GT|  (circles = worst regions)",
+                (10, 54), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
+    # ── scale top_row and bottom_row to fit DISPLAY_MAX_W ─────────────────────
+    max_w = max(top_row.shape[1], err_panel.shape[1])
+    if max_w > 1920:
+        scale = 1920 / max_w
+        def scale_img(img):
+            return cv2.resize(img,
+                              (int(img.shape[1] * scale), int(img.shape[0] * scale)),
+                              interpolation=cv2.INTER_AREA)
+        top_row   = scale_img(top_row)
+        err_panel = scale_img(err_panel)
+
+    # match widths for vconcat
+    w = min(top_row.shape[1], err_panel.shape[1])
+    return cv2.vconcat([top_row[:, :w], err_panel[:, :w]])
 
 
 def parse_args() -> argparse.Namespace:
@@ -342,11 +410,24 @@ def run_depth_comparison_experiment(
     debug: int = 0,
 ) -> None:
 
-    gt_data_dir, relative_pose_path, calib_rgbd_path, calib_stereo_path, depth_estimation_dir, depth_comparison_dir=prepare_depth_comparison_paths(parent_dir, date, rgbd_camera_suffix, nn_name)
+    gt_data_dir, relative_pose_path, calib_rgbd_path, calib_stereo_path, depth_estimation_dir, depth_comparison_dir=prepare_depth_comparison_paths(parent_dir, date, rgbd_camera_suffix)
+    paths = {
+        "gt_data_dir": gt_data_dir,
+        "relative_pose_path": relative_pose_path,
+        "calib_rgbd_path": calib_rgbd_path,
+        "calib_stereo_path": calib_stereo_path,
+        "depth_estimation_dir": depth_estimation_dir,
+        "depth_comparison_dir": depth_comparison_dir,
+    }
 
+    for name, path in paths.items():
+        exists = Path(path).exists()
+        status = "✓" if exists else "✗ NOT FOUND"
+        print(f"  {status}  {name:25s}  {path}")
 
     imgs_rgb = load_rgbd_images(gt_data_dir, suffix=rgbd_camera_suffix, max_imgs=max_imgs)
-    estimated_depth_maps = load_estimated_depth_map(depth_estimation_dir, nn_name, date=date, max_imgs=max_imgs)
+
+    estimated_depth_maps = load_estimated_depth_map(depth_estimation_dir, nn_name, max_imgs=max_imgs)
     frame_size = estimated_depth_maps[0].shape[::-1]
     logger.debug(f"NN frame size: {frame_size}")
 
@@ -409,6 +490,8 @@ def run_depth_comparison_experiment(
             depth_gt=depth_gt,
             depth_est=depth_est,
             pred_warped_m=pred_warped_m,
+            valid_pred=valid_pred,  # ← add
+            metrics=metrics,  # ← add
         )
 
         save_per_image_results(
@@ -423,27 +506,97 @@ def run_depth_comparison_experiment(
         )
 
         all_metrics.append(metrics_with_id)
+        if debug > 0:
+            cv2.imshow(f"Comparison {rgbd_camera_suffix} | {nn_name}", comparison_vis)
+            cv2.waitKey(0)
 
     save_summary_results(
         out_root=depth_comparison_dir,
         all_metrics=all_metrics,
     )
 
+def create_error_heatmap(
+    pred_warped_m: np.ndarray,
+    depth_gt: np.ndarray,
+    valid_pred: np.ndarray,
+    percentile_clip: float = 95.0,
+) -> np.ndarray:
+    valid = (
+        valid_pred
+        & np.isfinite(pred_warped_m) & (pred_warped_m > 0)
+        & np.isfinite(depth_gt)      & (depth_gt > 0)
+    )
 
+    h, w = depth_gt.shape
+    abs_err = np.zeros((h, w), dtype=np.float32)
+    abs_err[valid] = np.abs(pred_warped_m[valid] - depth_gt[valid])
+
+    if np.any(valid):
+        err_max = float(np.percentile(abs_err[valid], percentile_clip))
+    else:
+        err_max = 1.0
+
+    err_norm = np.clip(abs_err / max(err_max, 1e-6), 0, 1)
+    err_u8   = (err_norm * 255).astype(np.uint8)
+    heatmap  = cv2.applyColorMap(err_u8, cv2.COLORMAP_INFERNO)
+    heatmap[~valid] = (30, 30, 30)
+
+    # ── worst regions — use larger patch to spread circles out ────────────────
+    if np.any(valid):
+        patch = max(h // 10, 32)   # adaptive patch: ~10% of image height
+        worst = []
+        for py in range(0, h - patch, patch):
+            for px in range(0, w - patch, patch):
+                region_valid = valid[py:py+patch, px:px+patch]
+                if region_valid.sum() < patch * patch * 0.3:
+                    continue
+                region_err = abs_err[py:py+patch, px:px+patch]
+                mean_err = float(region_err[region_valid].mean())
+                worst.append((mean_err, px + patch // 2, py + patch // 2))
+
+        worst.sort(reverse=True)
+        radius = max(patch // 2, 15)
+        for rank, (err_val, cx, cy) in enumerate(worst[:5]):
+            cv2.circle(heatmap, (cx, cy), radius, (0, 255, 0), 2)
+            # keep label inside image bounds
+            lx = min(cx + radius + 4, w - 120)
+            ly = max(cy + 6, 15)
+            cv2.putText(heatmap, f"#{rank+1} {err_val:.2f}m",
+                        (lx, ly), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, (0, 0, 0),     2, cv2.LINE_AA)
+            cv2.putText(heatmap, f"#{rank+1} {err_val:.2f}m",
+                        (lx, ly), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, (0, 255, 0),   1, cv2.LINE_AA)
+
+    # ── colorbar ──────────────────────────────────────────────────────────────
+    bar_h = h
+    gradient = np.linspace(255, 0, bar_h, dtype=np.uint8).reshape(bar_h, 1)
+    colorbar = cv2.applyColorMap(np.repeat(gradient, 20, axis=1), cv2.COLORMAP_INFERNO)
+
+    label_panel = np.full((bar_h, 90, 3), 245, dtype=np.uint8)
+    cv2.putText(label_panel, f"{err_max:.2f}m", (4, 15),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+    cv2.putText(label_panel, "0.00m",           (4, bar_h - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+    cv2.putText(label_panel, f"p{percentile_clip:.0f}", (4, bar_h // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
+
+    return cv2.hconcat([heatmap, colorbar, label_panel])
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     parent_dir = Path(__file__).resolve().parents[3]
     date = "27032026"
-    nn_name = "DepthAnything3_stereo"
+    nn_name = "FoundationStereo"
     # NNname = "FoundationStereo"
-    debug = 0
+    debug = 1
     rgbd_camera_suffix = "zed"
-    max_imgs = 7
+    max_imgs = 2
     run_depth_comparison_experiment(
         parent_dir,
         date=date,
         nn_name=nn_name,
         rgbd_camera_suffix = rgbd_camera_suffix,
-        max_imgs=max_imgs
+        max_imgs=max_imgs,
+        debug=debug
     )

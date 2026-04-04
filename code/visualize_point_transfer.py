@@ -654,7 +654,7 @@ def main() -> None:
     args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / f"{img_number}_realsense_depth.npy"
 
     args.mode == 'cam1_to_cam2'
-    suffix1 = "realsense"
+    suffix1 = "zed"
     suffix2 = "left"
 
     calib_dict_cam1 = load_calib_data(args.cam1_calib, type=suffix1)

@@ -69,10 +69,8 @@ def scale_intrinsics(K: np.ndarray, old_size: tuple[int, int], new_size: tuple[i
     return K_new
 
 
-def load_estimated_depth_map(out_dir: Path, NNname: str, date: str, max_imgs: int | None = None) -> list[np.ndarray]:
+def load_estimated_depth_map(out_dir: Path, NNname: str, max_imgs: int = None) -> list[np.ndarray]:
     depth_maps_dir = out_dir / NNname / "depth"
-    print(depth_maps_dir)
-
     depth_paths = sorted(
         depth_maps_dir.glob("*_depth.npy"),
         key=lambda p: _idx(p.name)

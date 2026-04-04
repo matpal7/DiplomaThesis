@@ -126,8 +126,8 @@ def get_undistort_functions_stereo(calib_file):
     return undistort_l, undistort_r
 
 
-def load_l_r_images_undistorted(calib_dict, img_dir, max_imgs=None):
-    undistort_l, undistort_r = get_undistort_functions(calib_dict)
+def load_l_r_images_undistorted(calib_dict, img_dir, max_imgs=None, get_rectified=True):
+    undistort_l, undistort_r = get_undistort_functions(calib_dict, get_rectified=get_rectified)
     fnames_l, fnames_r = get_l_r_image_fnames(img_dir, max_imgs=max_imgs)
 
     imgs_l = [Image(fname, undistort_l) for fname in fnames_l]

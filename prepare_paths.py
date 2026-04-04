@@ -1,5 +1,14 @@
 from pathlib import Path
 
+DEPTH_ESTIMATION_NETWORK_NAMES = [
+    "DEFOM_stereo",
+    "DepthAnything3_mono",
+    "DepthAnything3_stereo",
+    "FoundationStereo",
+    "MoGe_mono",
+    "S2M2_stereo",
+    "UniDepth_mono",
+]
 
 def build_paths(root_dir:Path, date: str, model_name: str) -> tuple[Path, Path, Path]:
     img_dir = root_dir / "datasets" / f"dataset_{date}" / "stereo_4k_depth" / "rgb"
@@ -8,12 +17,15 @@ def build_paths(root_dir:Path, date: str, model_name: str) -> tuple[Path, Path, 
     return img_dir, calib_dict_file, out_dir
 
 
-def prepare_output_dirs(out_dir: Path) -> dict[str, Path]:
+def prepare_output_dirs(out_dir: Path, disp_dir: bool = False) -> dict[str, Path]:
     dirs = {
         "root": out_dir,
         "depth": out_dir / "depth",
         "vis": out_dir / "vis",
     }
+
+    if disp_dir:
+        dirs["disp"] = out_dir / "disp"
 
     for path in dirs.values():
         path.mkdir(parents=True, exist_ok=True)
@@ -37,14 +49,13 @@ def prepare_depth_comparison_paths(
     parent_dir: Path,
     date: str,
     rgbd_camera_suffix: str,
-    nn_name: str,
 ) -> tuple[Path, Path, Path, Path, Path, Path]:
     dataset_dir = parent_dir / "datasets" / f"dataset_{date}"
     out_root = parent_dir / "out" / f"out_{date}"
 
     camera_params_dir = out_root / "cameras_parameters"
     depth_estimation_dir = out_root / "depth_estimation"
-    depth_comparison_dir = out_root / "depth_comparison" / rgbd_camera_suffix / nn_name
+    depth_comparison_dir = out_root / "depth_comparison" / rgbd_camera_suffix
 
     gt_data_dir = dataset_dir / "stereo_4k_depth"
     relative_pose_path = (
@@ -63,3 +74,6 @@ def prepare_depth_comparison_paths(
         depth_estimation_dir,
         depth_comparison_dir,
     )
+
+def get_depth_estimation_network_names():
+    return DEPTH_ESTIMATION_NETWORK_NAMES.copy()
