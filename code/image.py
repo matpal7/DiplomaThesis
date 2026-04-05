@@ -21,7 +21,7 @@ class Image:
         if img is None:
             raise FileNotFoundError(f"Cannot load image at path: {img_path}")
 
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         self.img = undistort_function(img) if undistort_function is not None else img
         self.dims = (self.img.shape[1], self.img.shape[0])
 
