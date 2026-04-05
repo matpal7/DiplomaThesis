@@ -6,15 +6,16 @@ def main():
     zed = sl.Camera()
 
     init_params = sl.InitParameters()
-    init_params.camera_resolution = sl.RESOLUTION.HD720
-    init_params.depth_mode        = sl.DEPTH_MODE.ULTRA
-    init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Y_UP
-    init_params.coordinate_units  = sl.UNIT.METER
+    init_params.camera_resolution    = sl.RESOLUTION.HD720
+    init_params.depth_mode           = sl.DEPTH_MODE.ULTRA
+    init_params.coordinate_system    = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Y_UP
+    init_params.coordinate_units     = sl.UNIT.METER
+    init_params.depth_minimum_distance = 0.2    # ← start depth at 20 cm, helps close-up detail
 
     filter_params = sl.MeshFilterParameters()
     filter_params.set(sl.MESH_FILTER.LOW)
 
-    print("Opening ZED camera...")                         # ← startup message
+    print("Opening ZED camera...")
     err = zed.open(init_params)
     if err != sl.ERROR_CODE.SUCCESS:
         print("Camera Open:", repr(err), "- Exit program.")
@@ -33,25 +34,29 @@ def main():
         map_type     = sl.SPATIAL_MAP_TYPE.MESH,
         save_texture = True,
     )
+    mapping_parameters.resolution_meter = 0.01   # ← 1 cm — maximum detail (min allowed) [web:320]
+    mapping_parameters.range_meter       = 1.0   # ← only map up to 1 m — keeps object sharp
+    mapping_parameters.max_memory_usage  = 2048  # ← allow more RAM for high-res mesh
+
     err = zed.enable_spatial_mapping(mapping_parameters)
     if err != sl.ERROR_CODE.SUCCESS:
         print("Enable spatial mapping:", repr(err), "- Exit program.")
         zed.close()
         exit(1)
 
-    print("Starting capture — move slowly around your object...\n")  # ← capture start
+    print("Starting capture — move slowly around your object...\n")
 
     i = 0
     mesh = sl.Mesh()
     runtime_parameters = sl.RuntimeParameters()
 
     while i < 500:
-        if i % 50 == 0:
-            print(f"{i} / 500")
         if zed.grab(runtime_parameters) == sl.ERROR_CODE.SUCCESS:
             mapping_state = zed.get_spatial_mapping_state()
             sys.stdout.write("Images captured: {0} / 500 || {1} \033[K\r".format(i, mapping_state))
             sys.stdout.flush()
+            if i % 50 == 0:
+                print(f"\n  Milestone: {i} / 500 frames captured")
             i += 1
 
     print("\n\nCapture complete.")
