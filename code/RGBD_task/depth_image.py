@@ -26,19 +26,26 @@ def npy_to_depth_png(npy_path, output_path, max_depth_m=65.535):
         raise RuntimeError(f"Failed to save {output_path}")
     return depth_png
 
+def batch_convert(input_dir, pattern="*.npy", max_depth_m=10.000):
+    input_dir = Path(input_dir)
 
-def batch_convert(input_dir, output_dir, pattern="*.npy", depth_scale=1000.0):
-    input_path = Path(input_dir)
-    output_path = Path(output_dir)
+    npy_files = sorted(input_dir.glob(pattern))
+    print(f"Found {len(npy_files)} file(s)")
+
+    if not npy_files:
+        print("No .npy files found.")
+        return
+
+    output_path = input_dir.parent / "depth_pngs"
     output_path.mkdir(parents=True, exist_ok=True)
 
-    npy_files = sorted(input_path.glob(pattern))
-    print(f"Found {len(npy_files)} depth maps")
-
     for npy_file in npy_files:
-        base = npy_file.stem
-        png_out = output_path / f"{base}.png"
-        npy_to_depth_png(npy_file, png_out, depth_scale)
+        name = npy_file.stem.replace("_depth", "")
+        png_out = output_path / f"{name}.png"
+
+        npy_to_depth_png(npy_file, png_out, max_depth_m=max_depth_m)
+
+    print("Ready for FoundationPose!")
 
 
 if __name__ == "__main__":
@@ -52,22 +59,16 @@ if __name__ == "__main__":
 
     # Default paths
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "06042026"
-    img_number = "005"
+    date = "07042026"
 
     if not args.input:
         args.input = str(
-            parent_dir / "datasets" / f'dataset_{date}' / "stereo_4k_calibration" / "scene_000" / "depth" / f"{img_number}_zed_depth.npy")
+            parent_dir / "datasets" / f'dataset_{date}' / "cameras_downstream_task" / "scene_009" / "depth" )
     if not args.output:
-        args.output = str(parent_dir / "out" / f"out_{date}" / "depth_visualized" / f"{img_number}_zed.png")
+        args.output = str(parent_dir / "out" / f"out_{date}" / "depth_visualized" )
 
     input_path = Path(args.input)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if args.batch or input_path.is_dir():
-        batch_convert(input_path, output_path, depth_scale=args.scale)
-    else:
-        npy_to_depth_png(input_path, output_path, args.scale)
-
-    print("✅ Ready for FoundationPose!")
+    batch_convert(input_path)
