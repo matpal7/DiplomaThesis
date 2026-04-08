@@ -1,15 +1,19 @@
 import cv2
+import json
 import numpy as np
 from pathlib import Path
+from scipy.optimize import curve_fit
 
 # ── Config ───────────────────────────────────────────────────────────────────
 parent_dir = Path(__file__).resolve().parents[3]
-base_dir   = parent_dir / "datasets" / "dataset_02042026" / "stereo_4k_calibration"
-camera     = "zed"
-pattern    = f"*{camera}_depth.npy"
+date       = "09042026"
+base_dir   = parent_dir / "datasets" / f"dataset_{date}" / "cameras_statistic_model"
+out_dir    = parent_dir / "out" / f"out_{date}" / "cameras_statistic_model"
+out_dir.mkdir(parents=True, exist_ok=True)
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def compute_scene_stats(depth_dir: Path) -> dict | None:
+CAMERAS = ["zed", "realsense"]
+
+def compute_scene_stats(depth_dir: Path, pattern: str) -> dict | None:
     depth_files = sorted(depth_dir.glob(pattern))
     if len(depth_files) < 2:
         return None
@@ -29,26 +33,23 @@ def compute_scene_stats(depth_dir: Path) -> dict | None:
     N      = depths.shape[0]
     valid  = np.isfinite(depths) & (depths > 0)
 
-    # per-frame
+
     frame_stats = []
     for i in range(N):
-        v = valid[i]
+        v   = valid[i]
         d_v = depths[i][v]
-        mean_z = float(np.mean(d_v)) if v.any() else np.nan
-        std_z  = float(np.std(d_v))  if v.any() else np.nan
         frame_stats.append({
-            "file":         depth_files[i].name,
-            "valid_px":     int(v.sum()),
-            "mean_m":       mean_z,
-            "median_m":     float(np.median(d_v)) if v.any() else np.nan,
-            "std_m":        std_z,
-            # relative std per pixel: std(Z) / Z for each pixel, then averaged
-            "mean_rel_std_pct": float(np.mean(np.std(depths[:, v], axis=0) /
-                                              np.mean(depths[:, v], axis=0)) * 100)
-                                 if v.any() else np.nan,
+            "file":             depth_files[i].name,
+            "valid_px":         int(v.sum()),
+            "mean_m":           float(np.mean(d_v))   if v.any() else None,
+            "median_m":         float(np.median(d_v)) if v.any() else None,
+            "std_m":            float(np.std(d_v))    if v.any() else None,
+            "mean_rel_std_pct": float(np.mean(
+                                    np.std(depths[:, v], axis=0) /
+                                    np.mean(depths[:, v], axis=0)) * 100
+                                ) if v.any() else None,
         })
 
-    # consecutive diffs
     consec_diffs = []
     for i in range(N - 1):
         both = valid[i] & valid[i + 1]
@@ -56,16 +57,14 @@ def compute_scene_stats(depth_dir: Path) -> dict | None:
             consec_diffs.append({
                 "from": depth_files[i].name, "to": depth_files[i+1].name,
                 "valid_px": 0,
-                "mean_abs_diff_m": np.nan, "median_abs_diff_m": np.nan,
-                "max_abs_diff_m":  np.nan, "mean_signed_diff_m": np.nan,
-                "mean_rel_diff_pct": np.nan, "median_rel_diff_pct": np.nan,
+                "mean_abs_diff_m": None, "median_abs_diff_m": None,
+                "max_abs_diff_m":  None, "mean_signed_diff_m": None,
+                "mean_rel_diff_pct": None, "median_rel_diff_pct": None,
             })
             continue
-        diff      = depths[i+1][both] - depths[i][both]
-        abs_diff  = np.abs(diff)
-        ref_depth = depths[i][both]  # Z_i as reference
-        rel_diff  = abs_diff / ref_depth * 100  # as percentage
-
+        diff     = depths[i+1][both] - depths[i][both]
+        abs_diff = np.abs(diff)
+        rel_diff = abs_diff / depths[i][both] * 100
         consec_diffs.append({
             "from":                depth_files[i].name,
             "to":                  depth_files[i+1].name,
@@ -78,39 +77,36 @@ def compute_scene_stats(depth_dir: Path) -> dict | None:
             "median_rel_diff_pct": float(np.median(rel_diff)),
         })
 
-    # global stability — per-pixel std and relative std across all frames
     all_valid_mask    = valid.all(axis=0)
     pixel_std_map     = np.full(ref_shape, np.nan, dtype=np.float32)
     pixel_mean_map    = np.full(ref_shape, np.nan, dtype=np.float32)
     pixel_rel_std_map = np.full(ref_shape, np.nan, dtype=np.float32)
 
     if all_valid_mask.any():
-        stacked_valid        = depths[:, all_valid_mask]
-        pixel_std_map[all_valid_mask]  = stacked_valid.std(axis=0)
-        pixel_mean_map[all_valid_mask] = stacked_valid.mean(axis=0)
-        # relative std = σ(Z) / mean(Z) per pixel
+        stacked                           = depths[:, all_valid_mask]
+        pixel_std_map[all_valid_mask]     = stacked.std(axis=0)
+        pixel_mean_map[all_valid_mask]    = stacked.mean(axis=0)
         pixel_rel_std_map[all_valid_mask] = (
             pixel_std_map[all_valid_mask] / pixel_mean_map[all_valid_mask] * 100
         )
 
-    # depth-binned relative std for model fitting (Z vs σ_rel)
-    depth_bins = np.arange(0.5, 6.0, 0.25)  # 0.5m to 6m in 0.25m bins
+    depth_bins = np.arange(0.5, 6.0, 0.25)
     bin_stats  = []
     if all_valid_mask.any():
-        z_flat        = pixel_mean_map[all_valid_mask]
-        rel_std_flat  = pixel_rel_std_map[all_valid_mask]
-        abs_std_flat  = pixel_std_map[all_valid_mask]
+        z_flat       = pixel_mean_map[all_valid_mask]
+        rel_std_flat = pixel_rel_std_map[all_valid_mask]
+        abs_std_flat = pixel_std_map[all_valid_mask]
         for b_lo, b_hi in zip(depth_bins[:-1], depth_bins[1:]):
             mask_bin = (z_flat >= b_lo) & (z_flat < b_hi)
             if mask_bin.sum() < 10:
                 continue
             bin_stats.append({
-                "z_center_m":        float((b_lo + b_hi) / 2),
-                "n_pixels":          int(mask_bin.sum()),
-                "mean_abs_std_m":    float(np.mean(abs_std_flat[mask_bin])),
-                "median_abs_std_m":  float(np.median(abs_std_flat[mask_bin])),
-                "mean_rel_std_pct":  float(np.mean(rel_std_flat[mask_bin])),
-                "median_rel_std_pct":float(np.median(rel_std_flat[mask_bin])),
+                "z_center_m":         float((b_lo + b_hi) / 2),
+                "n_pixels":           int(mask_bin.sum()),
+                "mean_abs_std_m":     float(np.mean(abs_std_flat[mask_bin])),
+                "median_abs_std_m":   float(np.median(abs_std_flat[mask_bin])),
+                "mean_rel_std_pct":   float(np.mean(rel_std_flat[mask_bin])),
+                "median_rel_std_pct": float(np.median(rel_std_flat[mask_bin])),
             })
 
     return {
@@ -120,27 +116,93 @@ def compute_scene_stats(depth_dir: Path) -> dict | None:
         "pixels_valid_all":    int(all_valid_mask.sum()),
         "mean_pixel_std_m":    float(np.nanmean(pixel_std_map)),
         "median_pixel_std_m":  float(np.nanmedian(pixel_std_map)),
-        "max_pixel_std_m":     float(np.nanmax(pixel_std_map)) if all_valid_mask.any() else np.nan,
+        "max_pixel_std_m":     float(np.nanmax(pixel_std_map)) if all_valid_mask.any() else None,
         "pct_stable_1cm":      float(np.nanmean(pixel_std_map < 0.01)) * 100,
         "pct_stable_5cm":      float(np.nanmean(pixel_std_map < 0.05)) * 100,
-        # relative stability
         "mean_rel_std_pct":    float(np.nanmean(pixel_rel_std_map)),
         "median_rel_std_pct":  float(np.nanmedian(pixel_rel_std_map)),
         "pct_stable_rel_1pct": float(np.nanmean(pixel_rel_std_map < 1.0)) * 100,
         "pct_stable_rel_5pct": float(np.nanmean(pixel_rel_std_map < 5.0)) * 100,
         "bin_stats":           bin_stats,
-        # store maps for cross-scene aggregation if needed
-        "_pixel_rel_std_map":  pixel_rel_std_map,
-        "_pixel_std_map":      pixel_std_map,
     }
 
 
-def print_scene(scene_name: str, r: dict) -> None:
+def build_global_stats(all_results: dict) -> dict:
+    return {
+        "n_scenes":            len(all_results),
+        "total_frames":        sum(r["n_frames"]         for r in all_results.values()),
+        "total_valid_px":      sum(r["pixels_valid_all"] for r in all_results.values()),
+        "global_mean_std_m":   float(np.mean([r["mean_pixel_std_m"]    for r in all_results.values()])),
+        "global_median_std_m": float(np.mean([r["median_pixel_std_m"]  for r in all_results.values()])),
+        "global_max_std_m":    float(np.max( [r["max_pixel_std_m"]     for r in all_results.values()])),
+        "global_mean_rel_pct": float(np.mean([r["mean_rel_std_pct"]    for r in all_results.values()])),
+        "global_med_rel_pct":  float(np.mean([r["median_rel_std_pct"]  for r in all_results.values()])),
+        "pct_stable_1cm":      float(np.mean([r["pct_stable_1cm"]      for r in all_results.values()])),
+        "pct_stable_5cm":      float(np.mean([r["pct_stable_5cm"]      for r in all_results.values()])),
+        "pct_stable_rel_1pct": float(np.mean([r["pct_stable_rel_1pct"] for r in all_results.values()])),
+        "pct_stable_rel_5pct": float(np.mean([r["pct_stable_rel_5pct"] for r in all_results.values()])),
+        "best_scene":  min(all_results, key=lambda k: all_results[k]["median_pixel_std_m"]),
+        "worst_scene": max(all_results, key=lambda k: all_results[k]["median_pixel_std_m"]),
+        # "per_scene":   {
+        #     name: {k: v for k, v in r.items() if not k.startswith("_") and k != "bin_stats"}
+        #     for name, r in all_results.items()
+        # },
+    }
+
+
+def fit_power_model(all_results: dict) -> dict:
+    all_bins = [b for r in all_results.values() for b in r["bin_stats"]]
+    if len(all_bins) < 3:
+        return {}
+    z_vals = np.array([b["z_center_m"]      for b in all_bins])
+    s_vals = np.array([b["median_rel_std"] for b in all_bins])
+    w_vals = np.array([b["n_pixels"]         for b in all_bins], dtype=float)
+
+    def power_model(z, alpha, beta):
+        return alpha * np.power(z, beta)
+
+    popt, pcov = curve_fit(power_model, z_vals, s_vals, sigma=1 / w_vals, p0=[0.001, 2.0])
+    perr = np.sqrt(np.diag(pcov))
+
+    # t-test: β vs theoretical β=2
+    t_stat = (popt[1] - 2.0) / perr[1]
+
+    s_vals_rel = np.array([b["median_rel_std"] for b in all_bins])
+    popt_rel, pcov_rel = curve_fit(power_model, z_vals, s_vals_rel,
+                                   sigma=1 / w_vals, p0=[0.5, -0.2])
+    perr_rel = np.sqrt(np.diag(pcov_rel))
+
+    return {
+        "alpha":          float(popt[0]),
+        "alpha_std":      float(perr[0]),
+        "beta":           float(popt[1]),
+        "beta_std":       float(perr[1]),
+        "beta_t_vs_2":    float(t_stat),
+        "beta_reject_2":  bool(abs(t_stat) > 2.0),
+        "sigma_at_1m_cm": float(power_model(1.0, *popt) * 100),
+        "sigma_at_3m_cm": float(power_model(3.0, *popt) * 100),
+        "sigma_at_5m_cm": float(power_model(5.0, *popt) * 100),
+        "rel_alpha": float(popt_rel[0]),
+        "rel_alpha_std": float(perr_rel[0]),
+        "rel_beta": float(popt_rel[1]),
+        "rel_beta_std": float(perr_rel[1]),
+        "rel_sigma_at_1m_pct": float(power_model(1.0, *popt_rel)),
+        "rel_sigma_at_3m_pct": float(power_model(3.0, *popt_rel)),
+        "rel_sigma_at_5m_pct": float(power_model(5.0, *popt_rel)),
+        # "bin_data":       [
+        #     {"z_center_m": b["z_center_m"],
+        #      "median_abs_std_m": b["median_abs_std_m"],
+        #      "n_pixels": b["n_pixels"]}
+        #     for b in all_bins
+        # ],
+    }
+
+
+def print_scene(scene_name: str, r: dict, camera: str) -> None:
     W = 84
     print(f"\n{'█' * W}")
     print(f"  SCENE: {scene_name}  ({r['n_frames']} frames, camera={camera})")
     print(f"{'█' * W}")
-
     print(f"\n  {'File':<38} {'Mean':>7} {'Median':>7} {'Std':>7} {'RelStd%':>8} {'Valid px':>10}")
     print("  " + "─" * (W - 2))
     for s in r["frame_stats"]:
@@ -160,15 +222,12 @@ def print_scene(scene_name: str, r: dict) -> None:
     print(f"  Mean per-pixel std         : {r['mean_pixel_std_m']:.4f} m")
     print(f"  Median per-pixel std       : {r['median_pixel_std_m']:.4f} m")
     print(f"  Max per-pixel std          : {r['max_pixel_std_m']:.4f} m")
-    print(f"  Stable within 1 cm         : {r['pct_stable_1cm']:.1f}%")
-    print(f"  Stable within 5 cm         : {r['pct_stable_5cm']:.1f}%")
-    print(f"  Mean relative std          : {r['mean_rel_std_pct']:.2f}%")
-    print(f"  Median relative std        : {r['median_rel_std_pct']:.2f}%")
-    print(f"  Stable within 1% relative  : {r['pct_stable_rel_1pct']:.1f}%")
-    print(f"  Stable within 5% relative  : {r['pct_stable_rel_5pct']:.1f}%")
+    print(f"  Stable within 1 cm / 5 cm : {r['pct_stable_1cm']:.1f}% / {r['pct_stable_5cm']:.1f}%")
+    print(f"  Mean / Median rel. std     : {r['mean_rel_std_pct']:.2f}% / {r['median_rel_std_pct']:.2f}%")
+    print(f"  Stable within 1% / 5% rel : {r['pct_stable_rel_1pct']:.1f}% / {r['pct_stable_rel_5pct']:.1f}%")
 
     if r["bin_stats"]:
-        print(f"\n  Depth-binned relative std (for Z² model fit):")
+        print(f"\n  Depth-binned relative std:")
         print(f"  {'Z center':>10} {'N pixels':>10} {'MeanStd(m)':>12} {'MedStd(m)':>11} {'MeanRel%':>10} {'MedRel%':>9}")
         print("  " + "─" * (W - 2))
         for b in r["bin_stats"]:
@@ -177,89 +236,108 @@ def print_scene(scene_name: str, r: dict) -> None:
                   f"{b['mean_rel_std_pct']:>10.2f} {b['median_rel_std_pct']:>9.2f}")
 
 
-# ── Main: iterate over all scenes ────────────────────────────────────────────
-scene_dirs = sorted(d for d in base_dir.iterdir() if d.is_dir())
-
-if not scene_dirs:
-    raise RuntimeError(f"No scene subdirectories found in {base_dir}")
-
-all_results = {}
-skipped     = []
-
-for scene_dir in scene_dirs:
-    depth_dir = scene_dir / "depth"
-    if not depth_dir.exists():
-        skipped.append((scene_dir.name, "no depth/ subfolder"))
-        continue
-
-    result = compute_scene_stats(depth_dir)
-    if result is None:
-        skipped.append((scene_dir.name, f"fewer than 2 {camera} depth maps"))
-        continue
-
-    all_results[scene_dir.name] = result
-    print_scene(scene_dir.name, result)
-
-# ── Cross-scene summary ───────────────────────────────────────────────────────
-if all_results:
+def print_summary(camera: str, g: dict, model: dict) -> None:
     W = 84
     print(f"\n{'═' * W}")
-    print("  CROSS-SCENE SUMMARY")
+    print(f"  CROSS-SCENE SUMMARY {camera.upper()}")
     print(f"{'═' * W}")
-    print(f"  {'Scene':<20} {'Frames':>6} {'MeanStd':>9} {'MedStd':>9} "
-          f"{'MeanRel%':>9} {'Stbl1cm':>8} {'Stbl5cm':>8} {'Stbl1%':>7} {'Stbl5%':>7}")
-    print("  " + "─" * (W - 2))
-
-    for name, r in all_results.items():
-        print(f"  {name:<20} {r['n_frames']:>6} "
-              f"{r['mean_pixel_std_m']:>9.4f} {r['median_pixel_std_m']:>9.4f} "
-              f"{r['mean_rel_std_pct']:>8.2f}% "
-              f"{r['pct_stable_1cm']:>7.1f}% {r['pct_stable_5cm']:>7.1f}% "
-              f"{r['pct_stable_rel_1pct']:>6.1f}% {r['pct_stable_rel_5pct']:>6.1f}%")
-
-    total_frames   = sum(r["n_frames"]        for r in all_results.values())
-    total_valid_px = sum(r["pixels_valid_all"] for r in all_results.values())
-    n_scenes       = len(all_results)
-
-    global_mean_std      = float(np.mean([r["mean_pixel_std_m"]    for r in all_results.values()]))
-    global_med_std       = float(np.mean([r["median_pixel_std_m"]  for r in all_results.values()]))
-    global_max_std       = float(np.max( [r["max_pixel_std_m"]     for r in all_results.values()]))
-    global_stbl_1cm      = float(np.mean([r["pct_stable_1cm"]      for r in all_results.values()]))
-    global_stbl_5cm      = float(np.mean([r["pct_stable_5cm"]      for r in all_results.values()]))
-    global_mean_rel      = float(np.mean([r["mean_rel_std_pct"]    for r in all_results.values()]))
-    global_med_rel       = float(np.mean([r["median_rel_std_pct"]  for r in all_results.values()]))
-    global_stbl_rel_1pct = float(np.mean([r["pct_stable_rel_1pct"] for r in all_results.values()]))
-    global_stbl_rel_5pct = float(np.mean([r["pct_stable_rel_5pct"] for r in all_results.values()]))
-
-    print("  " + "─" * (W - 2))
-    print(f"  {'GLOBAL':<20} {total_frames:>6} "
-          f"{global_mean_std:>9.4f} {global_med_std:>9.4f} "
-          f"{global_mean_rel:>8.2f}% "
-          f"{global_stbl_1cm:>7.1f}% {global_stbl_5cm:>7.1f}% "
-          f"{global_stbl_rel_1pct:>6.1f}% {global_stbl_rel_5pct:>6.1f}%")
-
-    print(f"\n  Scenes evaluated       : {n_scenes}")
-    print(f"  Total frames           : {total_frames}")
-    print(f"  Total valid pixels     : {total_valid_px:,}")
-    print(f"  Global mean std        : {global_mean_std:.4f} m")
-    print(f"  Global median std      : {global_med_std:.4f} m")
-    print(f"  Global max std         : {global_max_std:.4f} m")
-    print(f"  Global mean rel. std   : {global_mean_rel:.2f}%")
-    print(f"  Global median rel. std : {global_med_rel:.2f}%")
-    print(f"  Stable within 1 cm     : {global_stbl_1cm:.1f}%")
-    print(f"  Stable within 5 cm     : {global_stbl_5cm:.1f}%")
-    print(f"  Stable within 1% rel.  : {global_stbl_rel_1pct:.1f}%")
-    print(f"  Stable within 5% rel.  : {global_stbl_rel_5pct:.1f}%")
-
-    best  = min(all_results, key=lambda k: all_results[k]["median_pixel_std_m"])
-    worst = max(all_results, key=lambda k: all_results[k]["median_pixel_std_m"])
-    print(f"\n  Most stable scene      : {best}  "
-          f"(median std = {all_results[best]['median_pixel_std_m']:.4f} m)")
-    print(f"  Least stable scene     : {worst}  "
-          f"(median std = {all_results[worst]['median_pixel_std_m']:.4f} m)")
+    print(f"  Scenes: {g['n_scenes']}  |  Frames: {g['total_frames']}  |  Valid px: {g['total_valid_px']:,}")
+    print(f"  Global mean std        : {g['global_mean_std_m']:.4f} m")
+    print(f"  Global median std      : {g['global_median_std_m']:.4f} m")
+    print(f"  Global max std         : {g['global_max_std_m']:.4f} m")
+    print(f"  Global mean rel. std   : {g['global_mean_rel_pct']:.2f}%")
+    print(f"  Global median rel. std : {g['global_med_rel_pct']:.2f}%")
+    print(f"  Stable ≤1cm / ≤5cm    : {g['pct_stable_1cm']:.1f}% / {g['pct_stable_5cm']:.1f}%")
+    print(f"  Stable ≤1% / ≤5% rel  : {g['pct_stable_rel_1pct']:.1f}% / {g['pct_stable_rel_5pct']:.1f}%")
+    print(f"  Best  scene            : {g['best_scene']}")
+    print(f"  Worst scene            : {g['worst_scene']}")
+    if model:
+        print(f"\n  α = {model['alpha']:.6f} ± {model['alpha_std']:.6f}")
+        print(f"  β = {model['beta']:.3f} ± {model['beta_std']:.3f}  "
+              f"(t vs β=2: {model['beta_t_vs_2']:.2f}  →  "
+              f"{'REJECT β=2' if model['beta_reject_2'] else 'cannot reject β=2'})")
+        print(f"  σ(Z) = {model['alpha']:.6f} · Z^{model['beta']:.3f}")
+        print(f"    → Z=1m: {model['sigma_at_1m_cm']:.2f} cm")
+        print(f"    → Z=3m: {model['sigma_at_3m_cm']:.2f} cm")
+        print(f"    → Z=5m: {model['sigma_at_5m_cm']:.2f} cm")
     print(f"{'═' * W}\n")
 
-if skipped:
-    print("  Skipped scenes:")
-    for name, reason in skipped:
-        print(f"    ✗  {name}  — {reason}")
+
+# ── Main loop over cameras ────────────────────────────────────────────────────
+scene_dirs    = sorted(d for d in base_dir.iterdir() if d.is_dir())
+all_cameras   = {}   # camera → {global_stats, model}
+
+for camera in CAMERAS:
+    pattern     = f"*{camera}_depth.npy"
+    all_results = {}
+    skipped     = []
+
+    for scene_dir in scene_dirs:
+        depth_dir = scene_dir / "depth"
+        if not depth_dir.exists():
+            skipped.append((scene_dir.name, "no depth/ subfolder"))
+            continue
+        result = compute_scene_stats(depth_dir, pattern)
+        if result is None:
+            skipped.append((scene_dir.name, f"fewer than 2 {camera} depth maps"))
+            continue
+        all_results[scene_dir.name] = result
+        # print_scene(scene_dir.name, result, camera)
+
+    if not all_results:
+        print(f"[{camera}] No results found — skipping.")
+        continue
+
+    global_stats = build_global_stats(all_results)
+    model        = fit_power_model(all_results)
+    print_summary(camera, global_stats, model)
+
+    # ── Save per-camera outputs ───────────────────────────────────────────────
+    camera_out = out_dir / camera
+    camera_out.mkdir(parents=True, exist_ok=True)
+
+    # 1. global summary (lightweight — no per-scene frame lists)
+    global_summary = {
+        "camera":      camera,
+        "date":        date,
+        "global":      {k: v for k, v in global_stats.items() if k != "per_scene"},
+        "model":       model,
+    }
+    with open(camera_out / "global_summary.json", "w") as f:
+        json.dump(global_summary, f, indent=2)
+
+    # 2. full per-scene stats (includes frame_stats, consec_diffs, bin_stats)
+    full_stats = {
+        "camera":   camera,
+        "date":     date,
+        "scenes":   {
+            name: {k: v for k, v in r.items() if not k.startswith("_")}
+            for name, r in all_results.items()
+        },
+    }
+    with open(camera_out / "per_scene_stats.json", "w") as f:
+        json.dump(full_stats, f, indent=2)
+
+    all_cameras[camera] = {"global": global_stats, "model": model}
+
+    if skipped:
+        print(f"  [{camera}] Skipped:")
+        for name, reason in skipped:
+            print(f"    ✗  {name}  — {reason}")
+
+# ── Combined summary for both cameras ────────────────────────────────────────
+if all_cameras:
+    combined = {
+        "date": date,
+        "cameras": {
+            cam: {
+                "global": {k: v for k, v in d["global"].items() if k != "per_scene"},
+                "model":  d["model"],
+            }
+            for cam, d in all_cameras.items()
+        }
+    }
+    with open(out_dir / "cameras_combined_summary.json", "w") as f:
+        json.dump(combined, f, indent=2)
+    print(f"[✓] Saved combined summary → {out_dir / 'cameras_combined_summary.json'}")
+    print(f"[✓] Per-camera outputs     → {out_dir}/<camera>/")
