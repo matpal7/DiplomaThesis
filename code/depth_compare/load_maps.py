@@ -7,6 +7,7 @@ import numpy as np
 from tqdm import tqdm
 
 from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_calibration
+from code.depth_compare.camera_model_parameters import load_sensor_model
 from code.depth_compare.compare_depth_between_cameras import warp_depth_to_target, _read_transform, _compute_metrics
 # import torch
 
@@ -14,7 +15,7 @@ from code.depth_compare.compare_depth_between_cameras import warp_depth_to_targe
 from code.image import load_rgbd_images
 from code.utils import load_estimated_depth_map, scale_intrinsics
 from code.visualize_depth import colorize_depth
-from prepare_paths import get_depth_estimation_network_names, \
+from code.prepare_paths import get_depth_estimation_network_names, \
     prepare_depth_comparison_paths
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,18 @@ transform_target_from_source[:3, 3] /= 1000.0
 norm = np.linalg.norm(transform_target_from_source[:3, 3])
 logger.debug(f"translation norm: {norm}")
 
+camera_stats_dir = parent_dir / "out" / f"out_{date}" / "cameras_statistic_model"
+sensor_model = load_sensor_model(camera_stats_dir, rgbd_suffix)
+
+USE_POWER_MODEL = sensor_model is not None
+if USE_POWER_MODEL:
+    alpha = sensor_model["rel_alpha"]
+    beta  = sensor_model["rel_beta"]
+    print(f"[✓] Loaded sensor model: σ_rel(Z) = {alpha:.8f} · Z^{beta:.3f}")
+else:
+    print("[!] Falling back to fixed-sigma tolerance")
+
+
 def resize_depth_safe(depth: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
     h, w = target_hw
     valid = np.isfinite(depth) & (depth > 0)
@@ -64,6 +77,43 @@ def resize_depth_safe(depth: np.ndarray, target_hw: tuple[int, int]) -> np.ndarr
     valid_out = valid_sum > 0.1   # at least some valid contribution
     out[valid_out] = depth_sum[valid_out] / valid_sum[valid_out]
     return out
+
+def within_power_model_tolerance(
+    gt: np.ndarray,
+    pred: np.ndarray,
+    mask: np.ndarray,
+    alpha: float,
+    beta: float,
+    n_sigma: float = 1.96,          # 95% CI
+) -> dict:
+    """
+    Accept pixels where |pred - gt| <= n_sigma * alpha * gt^(beta+1).
+    Returns the same key schema as within_sensor_tolerance for drop-in use.
+    """
+    gt_m   = gt[mask].astype(np.float64)
+    pred_m = pred[mask].astype(np.float64)
+
+    sigma_abs = alpha * np.power(gt_m, beta + 1.0)   # abs noise in metres
+    abs_err   = np.abs(pred_m - gt_m)
+    err_sigma = abs_err / np.clip(sigma_abs, 1e-9, None)
+
+    within = abs_err <= n_sigma * sigma_abs
+
+    # outside the band — compute filtered errors
+    outside_mask = ~within
+    filt_median_ae = float(np.median(abs_err[outside_mask])) if outside_mask.any() else 0.0
+    filt_arel      = float(np.median(abs_err[outside_mask] / gt_m[outside_mask])) \
+                     if outside_mask.any() else 0.0
+
+    return {
+        f"within_{n_sigma:.1f}sigma":          float(within.mean()),
+        "median_error_in_sigmas":              float(np.median(err_sigma)),
+        "sensor_sigma_mean_m":                 float(sigma_abs.mean()),
+        "abs_error_mean_m":                    float(abs_err.mean()),
+        "pct_outside":                         float(outside_mask.mean() * 100),
+        "filtered_median_abs_error_m":         filt_median_ae,
+        "filtered_arel":                       filt_arel,
+    }
 
 
 estimated_depth_maps = {}

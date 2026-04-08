@@ -7,16 +7,17 @@ from tqdm import tqdm
 
 from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_calibration
 from code.depth_compare.ZED_tolerance_depth import within_sensor_tolerance, sensor_filtered_errors
+from code.depth_compare.camera_model_parameters import load_sensor_model
 from code.depth_compare.compare_depth_between_cameras import warp_depth_to_target, _read_transform, _compute_metrics
 from code.depth_compare.evaluation import eval_depth_single
 # import torch
 
 # from code.depth_compare.evaluation import eval_depth
 from code.image import load_rgbd_images
+from code.prepare_paths import prepare_depth_comparison_paths, get_depth_estimation_network_names
 from code.utils import load_estimated_depth_map, scale_intrinsics
 from code.visualize_depth import colorize_depth
-from prepare_paths import get_depth_estimation_network_names, \
-    prepare_depth_comparison_paths
+
 
 parent_dir = Path(__file__).resolve().parent.parent.parent.parent
 date       = "27032026"
@@ -40,6 +41,18 @@ pose_convention = "cam1_from_cam2"
 transform_target_from_source = _read_transform(relative_pose_path, pose_convention)
 transform_target_from_source[:3, 3] /= 1000.0
 
+camera_stats_dir = parent_dir / "out" / f"out_09042026" / "cameras_statistic_model"
+sensor_model = load_sensor_model(camera_stats_dir, rgbd_suffix)
+
+USE_POWER_MODEL = sensor_model is not None
+if USE_POWER_MODEL:
+    alpha = sensor_model["rel_alpha"]
+    beta  = sensor_model["rel_beta"]
+    print(f"[✓] Loaded sensor model: σ_rel(Z) = {alpha:.8f} · Z^{beta:.3f}")
+else:
+    print("[!] Falling back to fixed-sigma tolerance")
+
+
 def resize_depth_safe(depth: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
     h, w = target_hw
     valid = np.isfinite(depth) & (depth > 0)
@@ -51,6 +64,43 @@ def resize_depth_safe(depth: np.ndarray, target_hw: tuple[int, int]) -> np.ndarr
     valid_out = valid_sum > 0.1
     out[valid_out] = depth_sum[valid_out] / valid_sum[valid_out]
     return out
+
+def within_power_model_tolerance(
+    gt: np.ndarray,
+    pred: np.ndarray,
+    mask: np.ndarray,
+    alpha: float,
+    beta: float,
+    n_sigma: float = 1.96,          # 95% CI
+) -> dict:
+    """
+    Accept pixels where |pred - gt| <= n_sigma * alpha * gt^(beta+1).
+    Returns the same key schema as within_sensor_tolerance for drop-in use.
+    """
+    gt_m   = gt[mask].astype(np.float64)
+    pred_m = pred[mask].astype(np.float64)
+
+    sigma_abs = alpha * np.power(gt_m, beta + 1.0)   # abs noise in metres
+    abs_err   = np.abs(pred_m - gt_m)
+    err_sigma = abs_err / np.clip(sigma_abs, 1e-9, None)
+
+    within = abs_err <= n_sigma * sigma_abs
+
+    # outside the band — compute filtered errors
+    outside_mask = ~within
+    filt_median_ae = float(np.median(abs_err[outside_mask])) if outside_mask.any() else 0.0
+    filt_arel      = float(np.median(abs_err[outside_mask] / gt_m[outside_mask])) \
+                     if outside_mask.any() else 0.0
+
+    return {
+        f"within_{n_sigma:.1f}sigma":          float(within.mean()),
+        "median_error_in_sigmas":              float(np.median(err_sigma)),
+        "sensor_sigma_mean_m":                 float(sigma_abs.mean()),
+        "abs_error_mean_m":                    float(abs_err.mean()),
+        "pct_outside":                         float(outside_mask.mean() * 100),
+        "filtered_median_abs_error_m":         filt_median_ae,
+        "filtered_arel":                       filt_arel,
+    }
 
 # ── load estimated depth maps ─────────────────────────────────────────────────
 estimated_depth_maps = {}
@@ -75,16 +125,28 @@ EVAL_DEPTH_AGG = [
 ]
 
 # ZED sensor tolerance — one per concept
-TOL_AGG = [
-    "within_1.0sigma",          # strict: % within ZED 1σ noise floor
-    "within_3.0sigma",          # lenient: % within ZED 3σ band
-    "median_error_in_sigmas",   # robust: typical error in sensor units
-    "sensor_sigma_mean_m",      # reference: ZED's own noise at scene depth
-    "abs_error_mean_m",         # absolute error (all pixels)
-    "pct_outside",              # % pixels with genuine network error
-    "filtered_median_abs_error_m",  # robust error on failure pixels only
-    "filtered_arel",            # relative error on failure pixels only
-]
+if USE_POWER_MODEL:
+    TOL_AGG = [
+        "within_1.96sigma",             # 95% CI band
+        "within_3.0sigma",              # 99.7% CI band
+        "median_error_in_sigmas",
+        "sensor_sigma_mean_m",
+        "abs_error_mean_m",
+        "pct_outside",
+        "filtered_median_abs_error_m",
+        "filtered_arel",
+    ]
+else:
+    TOL_AGG = [
+        "within_1.0sigma",
+        "within_3.0sigma",
+        "median_error_in_sigmas",
+        "sensor_sigma_mean_m",
+        "abs_error_mean_m",
+        "pct_outside",
+        "filtered_median_abs_error_m",
+        "filtered_arel",
+    ]
 all_networks_summary = []
 
 
@@ -138,18 +200,33 @@ for nn_name in estimated_depth_maps:
             max_depth=None,
         )
 
-        tol_1sigma = within_sensor_tolerance(
-            gt=depth_gt, pred=pred_warped_m, mask=mask_eval, n_sigma=1.0
-        )
-        tol_3sigma = within_sensor_tolerance(
-            gt=depth_gt, pred=pred_warped_m, mask=mask_eval, n_sigma=3.0
-        )
-        # filtered metrics use 1σ as the exclusion threshold
-        filtered = sensor_filtered_errors(
-            gt=depth_gt, pred=pred_warped_m, mask=mask_eval, n_sigma=1.0
-        )
-
-        within_tolerance_combined = {**tol_1sigma, **tol_3sigma, **filtered}
+        if USE_POWER_MODEL:
+            tol_1sigma = within_power_model_tolerance(
+                gt=depth_gt, pred=pred_warped_m, mask=mask_eval,
+                alpha=alpha, beta=beta, n_sigma=1.96,
+            )
+            tol_3sigma = within_power_model_tolerance(
+                gt=depth_gt, pred=pred_warped_m, mask=mask_eval,
+                alpha=alpha, beta=beta, n_sigma=3.0,
+            )
+            # Only take the band fraction from tol_3sigma — all diagnostic keys come from tol_1sigma
+            within_tolerance_combined = {
+                **tol_1sigma,
+                "within_3.0sigma": tol_3sigma["within_3.0sigma"],
+            }
+            filtered = {}
+        else:
+            tol_1sigma = within_sensor_tolerance(gt=depth_gt, pred=pred_warped_m,
+                                                 mask=mask_eval, n_sigma=1.0)
+            tol_3sigma = within_sensor_tolerance(gt=depth_gt, pred=pred_warped_m,
+                                                 mask=mask_eval, n_sigma=3.0)
+            filtered = sensor_filtered_errors(gt=depth_gt, pred=pred_warped_m,
+                                              mask=mask_eval, n_sigma=1.0)
+            within_tolerance_combined = {
+                **tol_1sigma,
+                "within_3.0sigma": tol_3sigma["within_3.0sigma"],
+                **filtered,
+            }
 
         row = {
             "image_id": image_number,
@@ -167,7 +244,7 @@ for nn_name in estimated_depth_maps:
         print(f"  [{image_number}]  "
               f"eval d1={eval_metrics.get('d1', float('nan'))*100:.1f}%  "
               f"arel={eval_metrics.get('arel', float('nan')):.3f}  "
-              f"silog={eval_metrics.get('silog', float('nan')):.2f}"
+              f"silog={eval_metrics.get('silog', float('nan')):.2f}  "
               f"medAE={eval_metrics.get('median_abs_error', float('nan')):.3f}m"
         )
 
@@ -199,6 +276,10 @@ for nn_name in estimated_depth_maps:
         if tol_col in df_per_image.columns:
             aggregated[f"{col}_mean"] = float(df_per_image[tol_col].mean())
 
+    aggregated["sensor_model_alpha"] = alpha if USE_POWER_MODEL else None
+    aggregated["sensor_model_beta"] = beta if USE_POWER_MODEL else None
+    aggregated["tolerance_mode"] = "power_model_95pct" if USE_POWER_MODEL else "fixed_sigma"
+
     all_networks_summary.append(aggregated)
 
     # ── save per-network summary CSV ──────────────────────────────────────────
@@ -217,15 +298,18 @@ for nn_name in estimated_depth_maps:
     print(f"    rmse                : {aggregated.get('rmse_mean', float('nan')):.4f} m")
     print(f"    median abs error    : {aggregated.get('median_abs_error_mean', float('nan')) * 100:.2f} cm")
     print(f"    silog               : {aggregated.get('silog_mean', float('nan')):.4f}")
-    print(f"  [ZED sensor tolerance]")
-    print(f"    within 1σ           : {aggregated.get('within_1.0sigma_mean', float('nan')) * 100:.2f}%")
-    print(f"    within 3σ           : {aggregated.get('within_3.0sigma_mean', float('nan')) * 100:.2f}%")
-    print(f"    median error        : {aggregated.get('median_error_in_sigmas_mean', float('nan')):.2f} σ")
-    print(f"    sensor sigma (ref)  : {aggregated.get('sensor_sigma_mean_m_mean', float('nan')) * 100:.2f} cm")
+    tol_band_key = "within_1.96sigma_mean" if USE_POWER_MODEL else "within_1.0sigma_mean"
+    tol_band_label = "within 1.96σ (95%)" if USE_POWER_MODEL else "within 1σ"
+    print(f"  [ZED sensor tolerance]  mode={aggregated['tolerance_mode']}")
+    print(f"    {tol_band_label:<22}: {aggregated.get(tol_band_key, float('nan')) * 100:.2f}%")
+    print(f"    within 3σ             : {aggregated.get('within_3.0sigma_mean', float('nan')) * 100:.2f}%")
+    print(f"    median error          : {aggregated.get('median_error_in_sigmas_mean', float('nan')):.2f} σ")
+    print(f"    sensor sigma (ref)    : {aggregated.get('sensor_sigma_mean_m_mean', float('nan')) * 100:.2f} cm")
     print(f"  [Failure pixel analysis]")
-    print(f"    pixels outside 1σ   : {aggregated.get('pct_outside_mean', float('nan')):.1f}%")
-    print(f"    failure median AE   : {aggregated.get('filtered_median_abs_error_m_mean', float('nan')) * 100:.2f} cm")
-    print(f"    failure arel        : {aggregated.get('filtered_arel_mean', float('nan')):.4f}")
+    print(f"    pixels outside band   : {aggregated.get('pct_outside_mean', float('nan')):.1f}%")
+    print(
+        f"    failure median AE     : {aggregated.get('filtered_median_abs_error_m_mean', float('nan')) * 100:.2f} cm")
+    print(f"    failure arel          : {aggregated.get('filtered_arel_mean', float('nan')):.4f}")
     print(f"  Saved → {metrics_out_dir / f'{nn_name}_summary_metrics.csv'}")
 
     # ── global summary across ALL networks ───────────────────────────────────────

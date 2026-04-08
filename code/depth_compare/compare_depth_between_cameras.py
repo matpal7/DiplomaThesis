@@ -12,9 +12,9 @@ from tqdm import tqdm
 from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_calibration
 from code.depth_compare.save_diff_data import save_per_image_results, save_summary_results
 from code.image import load_yaml_calibration, get_undistort_function_mono, load_rgbd_images
+from code.prepare_paths import prepare_depth_comparison_paths
 from code.utils import scale_intrinsics, load_estimated_depth_map
 from code.visualize_depth import colorize_depth
-from prepare_paths import prepare_depth_comparison_paths
 
 logger = logging.getLogger(__name__)
 

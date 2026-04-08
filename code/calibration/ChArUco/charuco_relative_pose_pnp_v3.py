@@ -18,7 +18,7 @@ from code.calibration.ChArUco.charuco_detection import (
 from code.image import get_undistort_functions, load_yaml_calibration, load_calib_data, \
     get_undistort_function_mono, numeric_key, extract_key
 from code.utils import load_dict, save_dict
-from prepare_paths import prepare_relative_pose_paths
+from code.prepare_paths import prepare_relative_pose_paths
 
 MAX_REPROJ_ERR = 2.0
 MIN_COMMON_CORNERS = 20

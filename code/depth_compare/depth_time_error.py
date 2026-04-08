@@ -90,7 +90,7 @@ def compute_scene_stats(depth_dir: Path, pattern: str) -> dict | None:
             pixel_std_map[all_valid_mask] / pixel_mean_map[all_valid_mask] * 100
         )
 
-    depth_bins = np.arange(0.5, 6.0, 0.25)
+    depth_bins = np.arange(0.25, 12.0, 0.25)
     bin_stats  = []
     if all_valid_mask.any():
         z_flat       = pixel_mean_map[all_valid_mask]
@@ -154,49 +154,40 @@ def fit_power_model(all_results: dict) -> dict:
     all_bins = [b for r in all_results.values() for b in r["bin_stats"]]
     if len(all_bins) < 3:
         return {}
-    z_vals = np.array([b["z_center_m"]      for b in all_bins])
-    s_vals = np.array([b["median_rel_std"] for b in all_bins])
-    w_vals = np.array([b["n_pixels"]         for b in all_bins], dtype=float)
+
+    z_vals       = np.array([b["z_center_m"]        for b in all_bins])
+    # raw ratio (unitless fraction, NOT multiplied by 100)
+    s_rel_raw    = np.array([b["median_rel_std_pct"] / 100.0 for b in all_bins])
+    w_vals       = np.array([b["n_pixels"]            for b in all_bins], dtype=float)
 
     def power_model(z, alpha, beta):
         return alpha * np.power(z, beta)
 
-    popt, pcov = curve_fit(power_model, z_vals, s_vals, sigma=1 / w_vals, p0=[0.001, 2.0])
-    perr = np.sqrt(np.diag(pcov))
-
-    # t-test: β vs theoretical β=2
-    t_stat = (popt[1] - 2.0) / perr[1]
-
-    s_vals_rel = np.array([b["median_rel_std"] for b in all_bins])
-    popt_rel, pcov_rel = curve_fit(power_model, z_vals, s_vals_rel,
-                                   sigma=1 / w_vals, p0=[0.5, -0.2])
+    # ── Primary model: relative depth error σ_rel(Z) = α · Z^β  [raw ratio] ──
+    popt_rel, pcov_rel = curve_fit(
+        power_model, z_vals, s_rel_raw,
+        sigma=1 / w_vals, p0=[0.005, 1.0], maxfev=10000
+    )
     perr_rel = np.sqrt(np.diag(pcov_rel))
+    t_stat   = (popt_rel[1] - 2.0) / perr_rel[1]   # t-test: β vs β=2
 
     return {
-        "alpha":          float(popt[0]),
-        "alpha_std":      float(perr[0]),
-        "beta":           float(popt[1]),
-        "beta_std":       float(perr[1]),
-        "beta_t_vs_2":    float(t_stat),
-        "beta_reject_2":  bool(abs(t_stat) > 2.0),
-        "sigma_at_1m_cm": float(power_model(1.0, *popt) * 100),
-        "sigma_at_3m_cm": float(power_model(3.0, *popt) * 100),
-        "sigma_at_5m_cm": float(power_model(5.0, *popt) * 100),
-        "rel_alpha": float(popt_rel[0]),
-        "rel_alpha_std": float(perr_rel[0]),
-        "rel_beta": float(popt_rel[1]),
-        "rel_beta_std": float(perr_rel[1]),
-        "rel_sigma_at_1m_pct": float(power_model(1.0, *popt_rel)),
-        "rel_sigma_at_3m_pct": float(power_model(3.0, *popt_rel)),
-        "rel_sigma_at_5m_pct": float(power_model(5.0, *popt_rel)),
-        # "bin_data":       [
-        #     {"z_center_m": b["z_center_m"],
-        #      "median_abs_std_m": b["median_abs_std_m"],
-        #      "n_pixels": b["n_pixels"]}
-        #     for b in all_bins
-        # ],
+        # ── relative model (primary) — raw ratio ──────────────────────────────
+        "rel_alpha":           float(popt_rel[0]),
+        "rel_alpha_std":       float(perr_rel[0]),
+        "rel_beta":            float(popt_rel[1]),
+        "rel_beta_std":        float(perr_rel[1]),
+        "rel_beta_t_vs_2":     float(t_stat),
+        "rel_beta_reject_2":   bool(abs(t_stat) > 2.0),
+        # predictions: raw ratio
+        "rel_sigma_at_1m_raw": float(power_model(1.0, *popt_rel)),
+        "rel_sigma_at_3m_raw": float(power_model(3.0, *popt_rel)),
+        "rel_sigma_at_5m_raw": float(power_model(5.0, *popt_rel)),
+        # predictions: pct (×100, for readability / reporting)
+        "rel_sigma_at_1m_pct": float(power_model(1.0, *popt_rel) * 100),
+        "rel_sigma_at_3m_pct": float(power_model(3.0, *popt_rel) * 100),
+        "rel_sigma_at_5m_pct": float(power_model(5.0, *popt_rel) * 100),
     }
-
 
 def print_scene(scene_name: str, r: dict, camera: str) -> None:
     W = 84
@@ -252,14 +243,13 @@ def print_summary(camera: str, g: dict, model: dict) -> None:
     print(f"  Best  scene            : {g['best_scene']}")
     print(f"  Worst scene            : {g['worst_scene']}")
     if model:
-        print(f"\n  α = {model['alpha']:.6f} ± {model['alpha_std']:.6f}")
-        print(f"  β = {model['beta']:.3f} ± {model['beta_std']:.3f}  "
-              f"(t vs β=2: {model['beta_t_vs_2']:.2f}  →  "
-              f"{'REJECT β=2' if model['beta_reject_2'] else 'cannot reject β=2'})")
-        print(f"  σ(Z) = {model['alpha']:.6f} · Z^{model['beta']:.3f}")
-        print(f"    → Z=1m: {model['sigma_at_1m_cm']:.2f} cm")
-        print(f"    → Z=3m: {model['sigma_at_3m_cm']:.2f} cm")
-        print(f"    → Z=5m: {model['sigma_at_5m_cm']:.2f} cm")
+        print(f"\n  ── Relative error model  σ_rel(Z) = α · Z^β  [raw ratio] ───────────────")
+        print(f"  α = {model['rel_alpha']:.8f} ± {model['rel_alpha_std']:.8f}")
+        print(f"  β = {model['rel_beta']:.3f} ± {model['rel_beta_std']:.3f}  ")
+        print(f"  σ_rel(Z) = {model['rel_alpha']:.8f} · Z^{model['rel_beta']:.3f}")
+        print(f"    → Z=1m: {model['rel_sigma_at_1m_raw']:.6f}  ({model['rel_sigma_at_1m_pct']:.3f}%)")
+        print(f"    → Z=3m: {model['rel_sigma_at_3m_raw']:.6f}  ({model['rel_sigma_at_3m_pct']:.3f}%)")
+        print(f"    → Z=5m: {model['rel_sigma_at_5m_raw']:.6f}  ({model['rel_sigma_at_5m_pct']:.3f}%)")
     print(f"{'═' * W}\n")
 
 
