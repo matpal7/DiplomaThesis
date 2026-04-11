@@ -33,13 +33,14 @@ def prepare_output_dirs(out_dir: Path, disp_dir: bool = False) -> dict[str, Path
     return dirs
 
 
-def prepare_relative_pose_paths(root_dir:Path, date: str, rgbd_cam_suffix: str):
+def prepare_relative_pose_paths(root_dir:Path, date: str, rgbd_cam_suffix: str, use_factory: bool=False):
     dataset_dir = root_dir / "datasets" / f'dataset_{date}'
     relative_pose_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
     out_dir = root_dir / "out" / f"out_{date}" / "cameras_parameters"
     out_dir_save = out_dir / "relative_pose"
     calib_dict_stereo = out_dir / "calib_data.npy"
-    calib_dict_RGBD_cam = out_dir / f"{rgbd_cam_suffix}_calibration_1280x720.yaml"
+    cam_suffix = "_factory" if use_factory else ""
+    calib_dict_RGBD_cam = out_dir / f"{rgbd_cam_suffix}_calibration_1280x720{cam_suffix}.yaml"
     return dataset_dir, relative_pose_dir, out_dir, out_dir_save, calib_dict_stereo, calib_dict_RGBD_cam
 
 from pathlib import Path

@@ -137,10 +137,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "07042026"
+    date = "09042026"
     img_number = "000"
-    scene = "009"
-    args.input = parent_dir / "datasets" / f'dataset_{date}' / "cameras_downstream_task" / f"scene_{scene}" / "rgb" / f"{img_number}_zed.png"
+    scene = "003"
+    args.input = parent_dir / "datasets" / f'dataset_{date}' / "cameras_statistic_model" / f"scene_{scene}" / "rgb" / f"{img_number}_zed.png"
 
     args.output = parent_dir / "out" / f"out_{date}" / "masks"  / f"scene_{scene}" / f"{img_number}_zed.png"
 

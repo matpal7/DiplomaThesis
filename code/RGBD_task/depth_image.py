@@ -59,11 +59,11 @@ if __name__ == "__main__":
 
     # Default paths
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "07042026"
+    date = "09042026"
 
     if not args.input:
         args.input = str(
-            parent_dir / "datasets" / f'dataset_{date}' / "cameras_downstream_task" / "scene_009" / "depth" )
+            parent_dir / "datasets" / f'dataset_{date}' / "cameras_statistic_model" / "scene_003" / "depth" )
     if not args.output:
         args.output = str(parent_dir / "out" / f"out_{date}" / "depth_visualized" )
 

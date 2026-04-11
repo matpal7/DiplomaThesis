@@ -811,7 +811,7 @@ def estimate_relative_pose(
             continue
 
         inlier_ids = np.intersect1d(inliers1.reshape(-1), inliers2.reshape(-1))
-        if inlier_ids.info < MIN_PNP_INLIERS:
+        if inlier_ids.size < MIN_PNP_INLIERS:
             print(
                 f"{pair_name}: rejected (PnP inlier overlap too small: {inlier_ids.size})"
             )
@@ -1044,9 +1044,9 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     parent_dir = Path(__file__).resolve().parents[4]
-    date = "27032026"
+    date = "11042026"
     rgbd_cam_suffix = "realsense"
-    dataset_dir, relative_pose_dir, out_dir, out_dir_save, calib_dict_stereo, calib_dict_RGBD_cam = prepare_relative_pose_paths(parent_dir, date, rgbd_cam_suffix)
+    dataset_dir, relative_pose_dir, out_dir, out_dir_save, calib_dict_stereo, calib_dict_RGBD_cam = prepare_relative_pose_paths(parent_dir, date, rgbd_cam_suffix, use_factory=True)
 
 
     cam1_calib = calib_dict_RGBD_cam

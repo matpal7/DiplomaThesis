@@ -91,9 +91,9 @@ def draw_axes(img: np.ndarray, T: np.ndarray, K: np.ndarray,
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parent_dir = Path(__file__).resolve().parent
-    chips_dir  = parent_dir / "demo_data" / "chips_can"
+    chips_dir  = parent_dir / "demo_data" / "wood_block"
 
-    K = load_K(chips_dir / "cam_K.txt")
+    # K = load_K(chips_dir / "cam_K.txt")
 
     # ← KEY CHANGE: load mesh with same normalization as FoundationPose
     mesh = trimesh.load(str(chips_dir / "textured.obj"))
@@ -105,41 +105,41 @@ if __name__ == "__main__":
 
     print(f"Bbox size (m): {bbox_size}  |  Axis length: {axis_length:.4f} m")
 
-    results_dir = chips_dir / "results"
-    pose_files  = sorted(results_dir.glob("*_zed.txt"))
-
-    for pose_path in pose_files:
-        frame_id = pose_path.stem.split("_")[0]
-        rgb_path = chips_dir / "rgb" / f"{frame_id}_zed.png"
-
-        if not rgb_path.exists():
-            print(f"[SKIP] {rgb_path}")
-            continue
-
-        T   = np.loadtxt(pose_path, dtype=np.float64)
-        img = cv2.imread(str(rgb_path))
-        if img is None:
-            continue
-
-        pts_2d = project_points(corners_3d, T, K)
-        img    = draw_bbox_3d(img, pts_2d, color=(0, 255, 0))
-        img    = draw_axes(img, T, K, axis_length=axis_length, origin_3d=bbox_center)
-
-        x1, y1 = pts_2d[:, 0].min(), pts_2d[:, 1].min()
-        x2, y2 = pts_2d[:, 0].max(), pts_2d[:, 1].max()
-        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 1)
-        cv2.putText(img, f"Frame {frame_id}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-
-        print(f"[{frame_id}] t = {T[:3, 3].round(4)}")
-        cv2.imshow("FoundationPose — bbox", img)
-
-        key = cv2.waitKey(0)
-        if key in (ord('q'), 27):
-            break
-        elif key == ord('s'):
-            out = results_dir / f"{frame_id}_bbox.png"
-            cv2.imwrite(str(out), img)
-            print(f"  Saved → {out}")
-
-    cv2.destroyAllWindows()
+    # results_dir = chips_dir / "results"
+    # pose_files  = sorted(results_dir.glob("*_zed.txt"))
+    #
+    # for pose_path in pose_files:
+    #     frame_id = pose_path.stem.split("_")[0]
+    #     rgb_path = chips_dir / "rgb" / f"{frame_id}_zed.png"
+    #
+    #     if not rgb_path.exists():
+    #         print(f"[SKIP] {rgb_path}")
+    #         continue
+    #
+    #     T   = np.loadtxt(pose_path, dtype=np.float64)
+    #     img = cv2.imread(str(rgb_path))
+    #     if img is None:
+    #         continue
+    #
+    #     pts_2d = project_points(corners_3d, T, K)
+    #     img    = draw_bbox_3d(img, pts_2d, color=(0, 255, 0))
+    #     img    = draw_axes(img, T, K, axis_length=axis_length, origin_3d=bbox_center)
+    #
+    #     x1, y1 = pts_2d[:, 0].min(), pts_2d[:, 1].min()
+    #     x2, y2 = pts_2d[:, 0].max(), pts_2d[:, 1].max()
+    #     cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 1)
+    #     cv2.putText(img, f"Frame {frame_id}", (10, 30),
+    #                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+    #
+    #     print(f"[{frame_id}] t = {T[:3, 3].round(4)}")
+    #     cv2.imshow("FoundationPose — bbox", img)
+    #
+    #     key = cv2.waitKey(0)
+    #     if key in (ord('q'), 27):
+    #         break
+    #     elif key == ord('s'):
+    #         out = results_dir / f"{frame_id}_bbox.png"
+    #         cv2.imwrite(str(out), img)
+    #         print(f"  Saved → {out}")
+    #
+    # cv2.destroyAllWindows()

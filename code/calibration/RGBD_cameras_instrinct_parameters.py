@@ -8,7 +8,7 @@ import pyrealsense2 as rs
 from get_images import FRAME_SIZE_REALSENSE, FRAME_SIZE_ZED
 
 
-def save_zed_calibration(out_dir, filename="zed_left_calibration_factory.yaml"):
+def save_zed_calibration(out_dir, filename="zed_left_calibration_1280x720_factory.yaml"):
     zed = sl.Camera()
 
     init = sl.InitParameters()
@@ -60,7 +60,7 @@ def save_zed_calibration(out_dir, filename="zed_left_calibration_factory.yaml"):
         zed.close()
 
 
-def save_realsense_calibration(out_dir, filename="realsense_calibration_factory.yaml"):
+def save_realsense_calibration(out_dir, filename="realsense_calibration_1280x720_factory.yaml"):
     pipeline = rs.pipeline()
     config = rs.config()
     config.enable_stream(
@@ -104,7 +104,7 @@ def save_realsense_calibration(out_dir, filename="realsense_calibration_factory.
 
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "27032026"
+    date = "11042026"
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
     print(f"out_dir: {out_dir}")
 

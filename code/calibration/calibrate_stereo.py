@@ -55,7 +55,7 @@ def extract_chessboard_points(calib_img_folder, undistort_l=None, undistort_r=No
                 resized_frame_R = cv2.resize(img_r, (640, 480))
                 img_concat_h = cv2.hconcat([resized_frame_L, resized_frame_R])
                 cv2.imshow('img r', img_concat_h)
-                cv2.waitKey(1)
+                cv2.waitKey(0)
 
         elif debug > 0:
             print("Corners not found!" ,fname_l)
@@ -174,7 +174,7 @@ def parse_args():
 
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "28032026"
+    date = "11042026"
     dataset_dir = parent_dir /"datasets" / f"dataset_{date}"
     calib_imgs_dir = dataset_dir / "stereo_4k_calibration" / "rgb"
     relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
@@ -182,11 +182,11 @@ if __name__ == '__main__':
     debug = 0
 
 
-    # calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=250, chessboard_x=8, chessboard_y=5)
-    # baseline_m = np.linalg.norm(calib_dict["tvec"].reshape(-1)) / 1000.0
-    # print("BASELINE in meters:", baseline_m)
-    # print(out_dir)
-    # save_dict(calib_dict, out_dir)
+    calib_dict = calibrate(calib_imgs_dir, debug=debug, chessboard_dim=30.0, max_imgs=34, chessboard_x=8, chessboard_y=5)
+    baseline_m = np.linalg.norm(calib_dict["tvec"].reshape(-1)) / 1000.0
+    print("BASELINE in meters:", baseline_m)
+    print(out_dir)
+    save_dict(calib_dict, out_dir)
     calib_dict = load_dict(out_dir / "calib_data.npy")
     #
     show_undistorted_images(calib_dict, calib_imgs_dir, max_imgs=5)
