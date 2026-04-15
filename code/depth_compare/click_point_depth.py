@@ -4,14 +4,24 @@ import cv2
 import numpy as np
 import sys
 
+from code.image import get_rectify_functions
+from code.utils import load_dict
+
 parent_dir = Path(__file__).resolve().parents[3]
-dataset_dir = parent_dir / "datasets" / "dataset_02042026" / "stereo_4k_calibration" / "scene_017"
-camera = "realsense"
+date = "12042026"
+dataset_dir = parent_dir / "datasets" / f"dataset_{date}" / "stereo_4k_depth"
+camera = "left"
+scene = 1
 # ── Load data ────────────────────────────────────────────────────────────────
-rgb_path   = dataset_dir / "rgb" / f"001_{camera}.png"        # ← change to your file
-depth_path = dataset_dir / "depth" / f"001_{camera}_depth.npy"        # ← change to your file
+rgb_path   = dataset_dir / "rgb" / f"{scene}_{camera}.png"        # ← change to your file
+depth_path = parent_dir / "out" / f"out_{date}" / "depth_estimation" / "S2M2_stereo" / "depth" / f"{scene}_depth.npy"        # ← change to your file
+
+out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
+calib_dict = load_dict(out_dir / "calib_data.npy")
+undistort_l, undistort_r = get_rectify_functions(calib_dict)
 
 rgb   = cv2.imread(rgb_path)
+rgb = undistort_l(rgb)
 depth = np.load(depth_path)     # float32, shape (H, W)
 
 if rgb is None:

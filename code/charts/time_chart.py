@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from code.prepare_paths import get_depth_estimation_network_names
 
 parent_dir = Path(__file__).resolve().parents[3]
-date = "27032026"
+date = "13042026"
 
 nn_names = get_depth_estimation_network_names()
 
@@ -44,7 +44,7 @@ for nn in nn_names:
     fig.add_trace(go.Scatter(
         x=x,
         y=times,
-        mode="lines+markers",
+        mode="lines",
         name=nn,
         customdata=labels,
         hovertemplate=(

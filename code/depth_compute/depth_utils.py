@@ -58,9 +58,9 @@ def save_outputs(
     np.save(depth_path, depth)
     cv2.imwrite(str(out_dirs["vis"] / f"{img_number}_vis.png"),     depth_vis)
     cv2.imwrite(str(out_dirs["vis"] / f"{img_number}_preview.png"), preview)
-    logging.info("Saved depth: %s", depth_path)
+    # logging.info("Saved depth: %s", depth_path)
 
     if disp is not None:
         disp_path = out_dirs["disp"] / f"{img_number}_disp.npy"
         np.save(disp_path, disp)
-        logging.info("Saved disparity: %s", disp_path)
+        # logging.info("Saved disparity: %s", disp_path)

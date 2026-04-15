@@ -5,7 +5,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import MIN_COMMON_CORNERS, estimate_relative_pose
-from prepare_paths import prepare_relative_pose_paths
+from code.prepare_paths import prepare_relative_pose_paths
 
 
 # keep your existing imports

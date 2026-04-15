@@ -82,11 +82,15 @@ def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str, max_im
         image_dir.glob(f"*{cam1_suffix}.png"),
         key=numeric_key
     )
+    print(image_dir)
+    print("Cam 1 imges len:", len(cam1_images))
 
     cam2_map = {
         extract_key(p): p
         for p in image_dir.glob(f"*{cam2_suffix}.png")
     }
+    print("Cam 1 imges len:", len(cam2_map.keys()))
+
 
     pairs: list[tuple[Path, Path, str]] = []
 
@@ -691,6 +695,8 @@ def estimate_relative_pose(
 
     _, board, detector = create_charuco_board(squares_horizontally=squares_horizontally, squares_vertically=squares_vertically, squares_length=squares_length, marker_length=marker_length)
     pairs = find_image_pairs(image_dir, cam1_suffix, cam2_suffix, max_imgs=max_imgs)
+    print(image_dir, cam1_suffix, cam2_suffix)
+    print(len(pairs))
 
     if not pairs:
         raise RuntimeError(
@@ -1044,9 +1050,9 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     parent_dir = Path(__file__).resolve().parents[4]
-    date = "11042026"
+    date = "13042026"
     rgbd_cam_suffix = "realsense"
-    dataset_dir, relative_pose_dir, out_dir, out_dir_save, calib_dict_stereo, calib_dict_RGBD_cam = prepare_relative_pose_paths(parent_dir, date, rgbd_cam_suffix, use_factory=True)
+    dataset_dir, relative_pose_dir, out_dir, out_dir_save, calib_dict_stereo, calib_dict_RGBD_cam = prepare_relative_pose_paths(parent_dir, date, rgbd_cam_suffix, use_factory=False)
 
 
     cam1_calib = calib_dict_RGBD_cam
@@ -1064,5 +1070,5 @@ if __name__ == "__main__":
         cam1_suffix=rgbd_cam_suffix,
         cam2_suffix="left",
         debug=0,
-        squares_horizontally=6, squares_vertically=8, squares_length=45.0, marker_length=31.0,
+        squares_horizontally=6, squares_vertically=8, squares_length=45.0, marker_length=31.0, max_imgs=None,
     )

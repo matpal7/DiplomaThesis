@@ -12,7 +12,7 @@ frameSize = (1280, 720)
 
 
 def show_undistorted_images(calib_dict, img_dir, scale=4, max_imgs=None):
-    imgs_l, imgs_r = load_l_r_images_undistorted(
+    imgs_l, imgs_r = load_l_r_images_rectified(
         calib_dict, img_dir, max_imgs=max_imgs
     )
     print(len(imgs_l))

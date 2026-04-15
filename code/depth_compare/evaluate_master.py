@@ -20,10 +20,9 @@ from code.visualize_depth import colorize_depth
 
 
 parent_dir = Path(__file__).resolve().parent.parent.parent.parent
-date       = "27032026"
+date       = "13042026"
 rgbd_suffix = "zed"
 max_imgs    = None
-
 (
     gt_data_dir,
     relative_pose_path,
@@ -105,9 +104,12 @@ def within_power_model_tolerance(
 # ── load estimated depth maps ─────────────────────────────────────────────────
 estimated_depth_maps = {}
 for nn_name in get_depth_estimation_network_names():
-    estimated_depth_maps[nn_name] = load_estimated_depth_map(
+    depth_maps = load_estimated_depth_map(
         depth_estimation_dir, nn_name, max_imgs=max_imgs
     )
+    if len(depth_maps) == 0:
+        continue
+    estimated_depth_maps[nn_name] = depth_maps
 
 metrics_out_dir = depth_comparison_dir / "metrics"
 metrics_out_dir.mkdir(parents=True, exist_ok=True)

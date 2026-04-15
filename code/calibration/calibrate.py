@@ -316,11 +316,12 @@ def calibrate_mono(
 
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "11042026"
+    date = "12042026"
     dataset_dir = parent_dir / "datasets" / f"dataset_{date}"
-    calib_imgs_dir = dataset_dir / "stereo_4k_calibration_stereo" / "rgb"
-    relative_pose_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    relative_pose_dir = dataset_dir / "calibration_RGBD" / "rgb"
+    calib_imgs_dir = dataset_dir / "calibration_RGBD" / "rgb"
+
+    calib_imgs_dir_Realsense = dataset_dir / "calibration_Realsense" / "rgb"
+    calib_imgs_dir_ZED = dataset_dir / "calibration_ZED" / "rgb"
 
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
     debug = 3
@@ -328,9 +329,9 @@ if __name__ == '__main__':
     # calib_dict = load_dict(out_dir / "calib_data.npy")
 
 
-    # calibrate(relative_pose_dir, str(out_dir), suffix="realsense", chessboard_dim=30.0, max_imgs=280, chessboard_x=8,
+    # calibrate(calib_imgs_dir_Realsense, str(out_dir), suffix="realsense", chessboard_dim=30.0, max_imgs=280, chessboard_x=8,
     #                         chessboard_y=5, debug=debug)
-    calibrate(relative_pose_dir, str(out_dir), suffix="zed", chessboard_dim=30.0, max_imgs=15, chessboard_x=8,
+    calibrate(calib_imgs_dir_ZED, str(out_dir), suffix="zed", chessboard_dim=30.0, max_imgs=None, chessboard_x=8,
                             chessboard_y=5, debug=debug)
 
     # calibrate(relative_pose_dir, str(out_dir), suffix="left", chessboard_dim=44.0, max_imgs=280, chessboard_x=7,

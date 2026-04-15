@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from code.image import load_l_r_images_undistorted
 from code.utils import load_dict
-from prepare_paths import prepare_relative_pose_paths
+from code.prepare_paths import prepare_relative_pose_paths
 
 
 def reorder_chessboard_corners(
@@ -273,7 +273,7 @@ def save_json(path: Path, data: dict) -> None:
 
 if __name__ == "__main__":
     parent_dir = Path(__file__).resolve().parent.parent.parent.parent
-    date = "27032026"
+    date = "11042026"
     rgbd_suffix = "realsense"
 
     pattern_size = (7, 5)

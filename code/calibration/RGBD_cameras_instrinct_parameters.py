@@ -8,7 +8,7 @@ import pyrealsense2 as rs
 from get_images import FRAME_SIZE_REALSENSE, FRAME_SIZE_ZED
 
 
-def save_zed_calibration(out_dir, filename="zed_left_calibration_1280x720_factory.yaml"):
+def save_zed_calibration(out_dir, filename="zed_calibration_1280x720_factory.yaml"):
     zed = sl.Camera()
 
     init = sl.InitParameters()

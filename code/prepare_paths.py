@@ -11,9 +11,9 @@ DEPTH_ESTIMATION_NETWORK_NAMES = [
 ]
 
 def build_paths(root_dir:Path, date: str, model_name: str) -> tuple[Path, Path, Path]:
-    img_dir = root_dir / "datasets" / f"dataset_{date}" / "stereo_4k_depth" / "rgb"
+    img_dir = root_dir / "datasets" / f"dataset_{date}" / f"stereo_4k_depth" / "rgb"
     calib_dict_file = root_dir / "out" / f"out_{date}" / "cameras_parameters" / "calib_data.npy"
-    out_dir = root_dir / "out" / f"out_{date}" / "depth_estimation" / model_name
+    out_dir = root_dir / "out" / f"out_{date}" / f"depth_estimation" / model_name
     return img_dir, calib_dict_file, out_dir
 
 

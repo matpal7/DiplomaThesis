@@ -15,9 +15,9 @@ from code.utils import load_estimated_depth_map, scale_intrinsics
 
 
 parent_dir  = Path(__file__).resolve().parents[3]
-date        = "27032026"
-rgbd_suffix = "zed"
-max_imgs    = None
+date        = "12042026"
+rgbd_suffix = "realsense"
+max_imgs    = 50
 
 (
     gt_data_dir,
@@ -29,6 +29,8 @@ max_imgs    = None
 ) = prepare_depth_comparison_paths(parent_dir, date, rgbd_suffix)
 
 imgs_rgb = load_rgbd_images(gt_data_dir, suffix=rgbd_suffix, max_imgs=max_imgs)
+
+print(calib_rgbd_path)
 
 k_source, d_source = load_camera_calibration(calib_stereo_path, suffix="left")
 k_target, d_target = load_camera_calibration(calib_rgbd_path)

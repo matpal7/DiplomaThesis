@@ -631,30 +631,33 @@ def main() -> None:
 
     parent_dir = Path(__file__).resolve().parents[2]
 
-    date = "27032026"
+    date = "13042026"
+    camera = "zed"
+
+    dir = "stereo_4k_relative_pose"
 
     dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
-    depth_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
-    img_number = 21
-    args.image_cam1 = depth_dir / f"{img_number}_realsense.png"
+    depth_dir = dataset_dir / dir / "rgb"
+    img_number = 18
+    args.image_cam1 = depth_dir / f"{img_number}_{camera}.png"
     args.image_cam2 = depth_dir / f"{img_number}_left.png"
 
     out_dir = parent_dir / 'out' / f"out_{date}" / "cameras_parameters"
 
-    calib_dict_realsense = out_dir / "realsense_calibration_1280x720.yaml"
+    calib_dict_realsense = out_dir / f"{camera}_calibration_1280x720.yaml"
     calib_dict_zed = out_dir / "left_calibration_1280x720.yaml"
     calib_dict_NICO_left = out_dir / "left_calibration_1280x720.yaml"
     calib_dict_stereo = out_dir / "calib_data.npy"
 
 
 
-    args.relative_pose = out_dir / "relative_pose" / "relative_pose_realsense_to_left_v3.yaml"
+    args.relative_pose = out_dir / "relative_pose" / f"relative_pose_{camera}_to_left_v3.yaml"
     args.cam1_calib = calib_dict_realsense
     args.cam2_calib = calib_dict_stereo
-    args.depth_map_cam1 = dataset_dir / "stereo_4k_relative_pose" / "depth" / f"{img_number}_realsense_depth.npy"
+    args.depth_map_cam1 = dataset_dir / dir / "depth" / f"{img_number}_{camera}_depth.npy"
 
     args.mode == 'cam1_to_cam2'
-    suffix1 = "zed"
+    suffix1 = camera
     suffix2 = "left"
 
     calib_dict_cam1 = load_calib_data(args.cam1_calib, type=suffix1)
