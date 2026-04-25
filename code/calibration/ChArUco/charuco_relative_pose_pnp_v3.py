@@ -1018,7 +1018,7 @@ if __name__ == "__main__":
     args = parse_args()
     parent_dir = Path(__file__).resolve().parents[4]
     date = "24042026"
-    rgbd_cam_suffix = "zed"
+    rgbd_cam_suffix = "realsense"
     dataset_dir, relative_pose_dir, out_dir, out_dir_save, calib_dict_stereo, calib_dict_RGBD_cam = prepare_relative_pose_paths(parent_dir, date, rgbd_cam_suffix, use_factory=False)
 
 

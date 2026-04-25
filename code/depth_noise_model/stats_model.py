@@ -3,6 +3,7 @@ import numpy as np
 import scipy.stats as stats
 from scipy.ndimage import generic_gradient_magnitude, sobel
 import matplotlib.pyplot as plt
+import json
 
 CAMERA_COLORS = {
     "zed":       {"scatter": "steelblue",  "line": "navy"},
@@ -29,7 +30,7 @@ PARAM_NAMES = {
 # Paths
 # ─────────────────────────────────────────────────────────────────────────────
 parent_dir = Path(__file__).resolve().parents[3]
-date       = "17042026"
+date       = "24042026"
 base_dir   = parent_dir / "datasets" / f"dataset_{date}" / "camera_stats_model"
 out_dir    = parent_dir / "out" / f"out_{date}" / "cameras_statistic_model"
 out_dir.mkdir(parents=True, exist_ok=True)
@@ -40,6 +41,15 @@ print(scene_dirs)
 camera_data = {}
 CAMERAS     = ["zed", "realsense"]
 
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.floating):   # zachytí float32, float64, atď.
+            return float(obj)
+        if isinstance(obj, np.integer):    # zachytí int32, int64, atď.
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1 & 2: Reference depth + relative error (per scene)
@@ -246,7 +256,7 @@ for camera, data in camera_data.items():
     print(f"  Valid samples (planar): {len(eps_v):,}")
     print(f"  Depth range: {z_v.min():.3f}m — {z_v.max():.3f}m")
 
-    MAX_SAMPLES = 1_000_000
+    MAX_SAMPLES = 5_000_000
     if len(eps_v) > MAX_SAMPLES:
         idx        = rng.choice(len(eps_v), size=MAX_SAMPLES, replace=False)
         eps_sample = eps_v[idx]
@@ -277,12 +287,15 @@ for camera, data in camera_data.items():
                            z_range=(float(z_v.min()), float(z_v.max())))
 
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Model summary — all distributions, all parameters
 # ─────────────────────────────────────────────────────────────────────────────
 print(f"\n{'='*60}")
 print("  MODEL SUMMARY — ALL DISTRIBUTIONS")
 print(f"{'='*60}")
+
+summary_to_save = {}
 
 for cam, r in results.items():
     print(f"\n  [{cam.upper()}]  depth range: {r['z_range'][0]:.2f}m — {r['z_range'][1]:.2f}m")
@@ -292,3 +305,22 @@ for cam, r in results.items():
         param_labels = PARAM_NAMES.get(dname, [f"p{i}" for i in range(len(dr["params"]))])
         param_str    = "  ".join(f"{k}={v:.5f}" for k, v in zip(param_labels, dr["params"]))
         print(f"  {dname:<14} {dr['ks_stat']:>10.4f}  {param_str}")
+
+    # ── Najlepšie rozdelenie ──────────────────────────────────────────────
+    best_name = r["best"]
+    best_dr   = r["dist_ranking"][best_name]
+    param_labels = PARAM_NAMES.get(best_name, [f"p{i}" for i in range(len(best_dr["params"]))])
+
+    summary_to_save[cam] = {
+        "best_distribution": best_name,
+        "ks_stat":           best_dr["ks_stat"],
+        "ks_p":              best_dr["ks_p"],
+        "z_range_m":         list(r["z_range"]),
+        "params":            dict(zip(param_labels, [float(p) for p in best_dr["params"]])),
+    }
+
+# ── Uloženie do JSON ──────────────────────────────────────────────────────
+json_path = out_dir / "best_distribution_models.json"
+with open(json_path, "w", encoding="utf-8") as f:
+    json.dump(summary_to_save, f, indent=4, ensure_ascii=False, cls=NumpyEncoder)
+print(f"\n  [✓] Najlepšie modely uložené → {json_path}")

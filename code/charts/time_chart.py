@@ -72,6 +72,6 @@ fig.update_layout(
 )
 
 fig.update_xaxes(tickmode="linear", dtick=10, range=[1, max_len])
-fig.update_yaxes(tickformat=".3f", dtick=0.25)
+fig.update_yaxes(tickformat=".2f", dtick=0.25)
 
 fig.show()

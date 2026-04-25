@@ -9,18 +9,15 @@ from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_ca
 from code.depth_compare.ZED_tolerance_depth import within_sensor_tolerance, sensor_filtered_errors
 from code.depth_compare.camera_model_parameters import load_sensor_model
 from code.depth_compare.compare_depth_between_cameras import warp_depth_to_target, _read_transform, _compute_metrics
-from code.depth_compare.evaluation import eval_depth_single
 # import torch
 
-# from code.depth_compare.evaluation import eval_depth
 from code.image import load_rgbd_images
 from code.prepare_paths import prepare_depth_comparison_paths, get_depth_estimation_network_names
 from code.utils import load_estimated_depth_map, scale_intrinsics
-from code.visualize_depth import colorize_depth
 
 
 parent_dir = Path(__file__).resolve().parent.parent.parent.parent
-date       = "13042026"
+date       = "24042026"
 rgbd_suffix = "zed"
 max_imgs    = None
 (
