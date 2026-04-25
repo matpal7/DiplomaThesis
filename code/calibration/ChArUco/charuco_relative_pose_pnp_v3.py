@@ -77,6 +77,7 @@ def load_camera_calibration(path: Path, suffix="left") -> tuple[np.ndarray, np.n
         raise ValueError(f"Unsupported calibration file format: {path}")
 
 
+
 def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str, max_imgs: int) -> list[tuple[Path, Path, str]]:
     cam1_images = sorted(
         image_dir.glob(f"*{cam1_suffix}.png"),
@@ -108,13 +109,6 @@ def find_image_pairs(image_dir: Path, cam1_suffix: str, cam2_suffix: str, max_im
 
     return pairs
 
-def find_images(image_dir: Path, cam1_suffix: str) -> list[Path]:
-    cam1_images = sorted(
-        image_dir.glob(f"*{cam1_suffix}.png"),
-        key=numeric_key
-    )
-
-    return cam1_images
 
 def _pack_optimization_params(T_cam2_cam1: np.ndarray, samples: list[PoseSample]) -> np.ndarray:
     rvec_global, _ = cv2.Rodrigues(T_cam2_cam1[:3, :3])
@@ -208,10 +202,10 @@ def optimize_global_camera_pose(
     T_global[:3, :3] = R_global
     T_global[:3, 3] = t_global.reshape(3)
 
-    # residuals = _joint_residuals(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
-    # rms = float(np.sqrt(np.mean(residuals ** 2))) if residuals.size > 0 else float("nan")
-    raw_residuals = _joint_residuals_unweighted(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
-    rms = float(np.sqrt(np.mean(raw_residuals ** 2))) if raw_residuals.size > 0 else float("nan")
+    residuals = _joint_residuals(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
+    rms = float(np.sqrt(np.mean(residuals ** 2))) if residuals.size > 0 else float("nan")
+    # raw_residuals = _joint_residuals_unweighted(result.x, samples, K_cam1, dist_cam1, K_cam2, dist_cam2)
+    # rms = float(np.sqrt(np.mean(raw_residuals ** 2))) if raw_residuals.size > 0 else float("nan")
     return T_global, R_global, t_global.reshape(3), rms
 
 def _joint_residuals_unweighted(
@@ -250,23 +244,6 @@ def _joint_residuals_unweighted(
         return np.array([], dtype=np.float64)
 
     return np.concatenate(residual_blocks).astype(np.float64)
-
-
-def _resize_to_same_height(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    h1, w1 = img1.shape[:2]
-    h2, w2 = img2.shape[:2]
-
-    if h1 == h2:
-        return img1, img2
-
-    target_h = min(h1, h2)
-
-    def resize_keep_aspect(img, target_h):
-        h, w = img.shape[:2]
-        scale = target_h / h
-        return cv2.resize(img, (int(round(w * scale)), target_h))
-
-    return resize_keep_aspect(img1, target_h), resize_keep_aspect(img2, target_h)
 
 def show_debug_window(window_name: str, image: np.ndarray, debug: int) -> None:
     if debug <= 0:
@@ -496,11 +473,6 @@ def _extract_common_charuco_points(
     return object_points, img_pts_1, img_pts_2, common_ids_arr
 
 
-# def _compute_pair_weight(num_common_corners: int, reproj_cam1: float, reproj_cam2: float) -> float:
-#     reproj_score = max(0.25, (reproj_cam1 + reproj_cam2) * 0.5)
-#     raw_weight = np.sqrt(float(num_common_corners)) / reproj_score
-#     return float(np.clip(raw_weight, MIN_PAIR_WEIGHT, MAX_PAIR_WEIGHT))
-
 def _compute_pair_weight(
     num_common_corners: int,
     reproj_cam1: float,
@@ -631,15 +603,6 @@ def _reject_high_rms_pairs(
     inliers = [sample for sample, v in zip(samples, pair_rms) if v <= rms_thr]
     return inliers, pair_rms, rms_thr
 
-def _camera_suffix_from_calib_path(calib_path: Path) -> str:
-    """
-    Example:
-        left_NICO.yaml  -> left
-        right.yaml      -> right
-        realsense.yaml  -> realsense
-    """
-    return calib_path.stem.split("_")[0].lower()
-
 
 def _get_undistort_function(calib_dict, camera_suffix):
     use_stereo = False
@@ -686,7 +649,6 @@ def estimate_relative_pose(
     K_cam1, dist_cam1 = calib_dict_cam1["K"], calib_dict_cam1["D"]
     K_cam2, dist_cam2 = load_camera_calibration(cam2_calib, suffix=cam2_suffix)
 
-    # undistort_1 = _get_undistort_function(calib_dict_cam1, cam1_suffix)
     undistort_1 = None
     undistort_2 = _get_undistort_function(calib_stereo, cam2_suffix)
 
@@ -1048,10 +1010,15 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(levelname)s | %(message)s"
+    )
+
     args = parse_args()
     parent_dir = Path(__file__).resolve().parents[4]
-    date = "13042026"
-    rgbd_cam_suffix = "realsense"
+    date = "24042026"
+    rgbd_cam_suffix = "zed"
     dataset_dir, relative_pose_dir, out_dir, out_dir_save, calib_dict_stereo, calib_dict_RGBD_cam = prepare_relative_pose_paths(parent_dir, date, rgbd_cam_suffix, use_factory=False)
 
 

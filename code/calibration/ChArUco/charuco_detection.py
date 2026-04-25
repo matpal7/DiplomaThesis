@@ -14,6 +14,22 @@ SQUARE_LENGTH = 0.054
 MARKER_LENGTH = 0.037
 TRESHOLD_CORNERS = 20
 
+def _resize_to_same_height(img1: np.ndarray, img2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    h1, w1 = img1.shape[:2]
+    h2, w2 = img2.shape[:2]
+
+    if h1 == h2:
+        return img1, img2
+
+    target_h = min(h1, h2)
+
+    def resize_keep_aspect(img, target_h):
+        h, w = img.shape[:2]
+        scale = target_h / h
+        return cv2.resize(img, (int(round(w * scale)), target_h))
+
+    return resize_keep_aspect(img1, target_h), resize_keep_aspect(img2, target_h)
+
 def create_charuco_board(squares_horizontally=6, squares_vertically=8, squares_length=32.0, marker_length=22.0):
     aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
     board = cv2.aruco.CharucoBoard(

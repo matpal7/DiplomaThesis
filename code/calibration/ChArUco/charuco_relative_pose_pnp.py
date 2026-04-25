@@ -846,7 +846,7 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
     parent_dir = Path(__file__).resolve().parents[4]
-    date = "28032026"
+    date = "24042026"
     dataset_dir = parent_dir / "datasets" / f'dataset_{date}'
     depth_dir = dataset_dir / 'stereo_4k_relative_pose' / 'rgb'
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"

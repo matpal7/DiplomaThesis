@@ -273,12 +273,12 @@ def save_json(path: Path, data: dict) -> None:
 
 if __name__ == "__main__":
     parent_dir = Path(__file__).resolve().parent.parent.parent.parent
-    date = "11042026"
-    rgbd_suffix = "realsense"
+    date = "24042026"
+    rgbd_suffix = "zed"
 
     pattern_size = (7, 5)
     square_size_m = 0.045
-    max_imgs = 20
+    max_imgs = None
     show_debug = False
 
     (
@@ -290,7 +290,7 @@ if __name__ == "__main__":
         calib_dict_RGBD_cam,
     ) = prepare_relative_pose_paths(parent_dir, date, rgbd_suffix)
 
-    calibration_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
+    calibration_dir = dataset_dir / "distance_validation" / "rgb"
     calib_dict = load_dict(calib_dict_stereo)
 
     K_l = np.asarray(calib_dict["new_K_l"], dtype=np.float64)

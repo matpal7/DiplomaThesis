@@ -1089,11 +1089,11 @@ def save_repeated_scene_captures(
 if __name__ == '__main__':
     chessboard_size = (8,5)
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "13042026_2"
+    date = "16042026"
 
     # calib_dir = load_dict(out_dir + "/calib_data.npy")
     dataset_dir = os.path.join(parent_dir, "datasets", f'dataset_{date}')
-    depth_dir = os.path.join(dataset_dir, 'stereo_4k_depth')
+    depth_dir = os.path.join(dataset_dir, 'cameras_statistic_model')
     print(depth_dir)
 
     out_dir = parent_dir / "out" / f"out_{date}" / "cameras_parameters"
@@ -1109,7 +1109,7 @@ if __name__ == '__main__':
                           marker_length=31.0
                             )
 
-    # save_repeated_scene_captures(4,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=True, use_zed=True, calib_dict=calib_dict,
+    # save_repeated_scene_captures(1,1, frame_size_stereo=stereo_frame_size, save_dir=depth_dir, use_realsense=None, use_zed=None, calib_dict=None,
     #                       squares_horizontally=6,
     #                       squares_vertically=8,
     #                       squares_length=45.0,

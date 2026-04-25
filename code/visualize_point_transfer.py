@@ -631,14 +631,14 @@ def main() -> None:
 
     parent_dir = Path(__file__).resolve().parents[2]
 
-    date = "13042026"
+    date = "24042026"
     camera = "zed"
 
     dir = "stereo_4k_relative_pose"
 
     dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
     depth_dir = dataset_dir / dir / "rgb"
-    img_number = 18
+    img_number = 12
     args.image_cam1 = depth_dir / f"{img_number}_{camera}.png"
     args.image_cam2 = depth_dir / f"{img_number}_left.png"
 
@@ -670,7 +670,7 @@ def main() -> None:
     if img1 is None:
         raise FileNotFoundError(f'Cannot read camera 1 image: {args.image_cam1}')
 
-    img1 = undistort_1(img1)
+    # img1 = undistort_1(img1)
     K1, D1 = calib_dict_cam1["K"], calib_dict_cam1["D"]
 
     if args.image_cam2 is None or args.cam2_calib is None or args.relative_pose is None:

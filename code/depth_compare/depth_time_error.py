@@ -6,8 +6,8 @@ from scipy.optimize import curve_fit
 
 # ── Config ───────────────────────────────────────────────────────────────────
 parent_dir = Path(__file__).resolve().parents[3]
-date       = "09042026"
-base_dir   = parent_dir / "datasets" / f"dataset_{date}" / "cameras_statistic_model"
+date       = "17042026"
+base_dir   = parent_dir / "datasets" / f"dataset_{date}" / "camera_stats_model"
 out_dir    = parent_dir / "out" / f"out_{date}" / "cameras_statistic_model"
 out_dir.mkdir(parents=True, exist_ok=True)
 

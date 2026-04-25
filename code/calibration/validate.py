@@ -7,8 +7,8 @@ import cv2
 import numpy as np
 
 from code.image import load_l_r_images_undistorted
+from code.prepare_paths import prepare_relative_pose_paths
 from code.utils import load_dict
-from prepare_paths import prepare_relative_pose_paths
 
 def draw_chessboard_corners_labeled(
     image: np.ndarray,
@@ -295,8 +295,8 @@ def save_csv(path: Path, rows: list[dict]) -> None:
 
 if __name__ == "__main__":
     parent_dir = Path(__file__).resolve().parent.parent.parent.parent
-    date = "27032026"
-    rgbd_suffix = "realsense"
+    date = "2404026"
+    rgbd_suffix = "zed"
 
     pattern_size = (7,5)
     square_size_m = 0.030

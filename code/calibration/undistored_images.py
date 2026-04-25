@@ -12,8 +12,8 @@ frameSize = (1280, 720)
 
 
 def show_undistorted_images(calib_dict, img_dir, scale=4, max_imgs=None):
-    imgs_l, imgs_r = load_l_r_images_rectified(
-        calib_dict, img_dir, max_imgs=max_imgs
+    imgs_l, imgs_r = load_l_r_images_undistorted( #load_l_r_images_undistorted
+        calib_dict, img_dir, max_imgs=max_imgs, get_rectified=True
     )
     print(len(imgs_l))
     imgs_rgb = load_rgbd_images(img_dir, max_imgs=max_imgs)
@@ -73,7 +73,7 @@ def undistorted_image_left(img, calib_dict):
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parent.parent
 
-    dataset_dir = parent_dir / "dataset_11032026"
+    dataset_dir = parent_dir / "dataset_24042026"
     calib_imgs_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
 
     out_dir = parent_dir / "out" / "cameras_parameters"
