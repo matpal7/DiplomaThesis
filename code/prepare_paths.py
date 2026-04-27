@@ -1,15 +1,15 @@
 from pathlib import Path
 
+
 DEPTH_ESTIMATION_NETWORK_NAMES = [
-    "DEFOM_stereo",
+    "UniDepth_mono",
+    "MoGe_mono",
     "DepthAnything3_mono",
     "DepthAnything3_stereo",
+    "DEFOM_stereo",
     "FoundationStereo",
-    "MoGe_mono",
     "S2M2_stereo",
-    "UniDepth_mono",
 ]
-
 def build_paths(root_dir:Path, date: str, model_name: str) -> tuple[Path, Path, Path]:
     img_dir = root_dir / "datasets" / f"dataset_{date}" / f"stereo_4k_depth" / "rgb"
     calib_dict_file = root_dir / "out" / f"out_{date}" / "cameras_parameters" / "calib_data.npy"

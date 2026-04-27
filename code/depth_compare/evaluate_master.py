@@ -6,8 +6,6 @@ import pandas as pd
 from tqdm import tqdm
 
 from code.calibration.ChArUco.charuco_relative_pose_pnp_v3 import load_camera_calibration
-from code.depth_compare.ZED_tolerance_depth import within_sensor_tolerance, sensor_filtered_errors
-from code.depth_compare.camera_model_parameters import load_sensor_model
 from code.depth_compare.compare_depth_between_cameras import warp_depth_to_target, _read_transform, _compute_metrics
 # import torch
 
@@ -37,8 +35,8 @@ pose_convention = "cam1_from_cam2"
 transform_target_from_source = _read_transform(relative_pose_path, pose_convention)
 transform_target_from_source[:3, 3] /= 1000.0
 
-camera_stats_dir = parent_dir / "out" / f"out_09042026" / "cameras_statistic_model"
-sensor_model = load_sensor_model(camera_stats_dir, rgbd_suffix)
+camera_stats_dir = parent_dir / "out" / f"out_24042026" / "cameras_statistic_model"
+sensor_model = None
 
 USE_POWER_MODEL = sensor_model is not None
 if USE_POWER_MODEL:
@@ -199,39 +197,12 @@ for nn_name in estimated_depth_maps:
             max_depth=None,
         )
 
-        if USE_POWER_MODEL:
-            tol_1sigma = within_power_model_tolerance(
-                gt=depth_gt, pred=pred_warped_m, mask=mask_eval,
-                alpha=alpha, beta=beta, n_sigma=1.96,
-            )
-            tol_3sigma = within_power_model_tolerance(
-                gt=depth_gt, pred=pred_warped_m, mask=mask_eval,
-                alpha=alpha, beta=beta, n_sigma=3.0,
-            )
-            # Only take the band fraction from tol_3sigma — all diagnostic keys come from tol_1sigma
-            within_tolerance_combined = {
-                **tol_1sigma,
-                "within_3.0sigma": tol_3sigma["within_3.0sigma"],
-            }
-            filtered = {}
-        else:
-            tol_1sigma = within_sensor_tolerance(gt=depth_gt, pred=pred_warped_m,
-                                                 mask=mask_eval, n_sigma=1.0)
-            tol_3sigma = within_sensor_tolerance(gt=depth_gt, pred=pred_warped_m,
-                                                 mask=mask_eval, n_sigma=3.0)
-            filtered = sensor_filtered_errors(gt=depth_gt, pred=pred_warped_m,
-                                              mask=mask_eval, n_sigma=1.0)
-            within_tolerance_combined = {
-                **tol_1sigma,
-                "within_3.0sigma": tol_3sigma["within_3.0sigma"],
-                **filtered,
-            }
+
 
         row = {
             "image_id": image_number,
             "nn_name": nn_name,
             **{f"eval_{k}": v for k, v in eval_metrics.items()},
-            **{f"tol_{k}": v for k, v in within_tolerance_combined.items()},
         }
         per_image_rows.append(row)
 
