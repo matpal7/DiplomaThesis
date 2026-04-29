@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from calibration.image import get_undistort_functions
+from code.image import get_undistort_functions
 
 
 def _load_calib_dict(path: Path) -> dict:

@@ -5,7 +5,6 @@ DEPTH_ESTIMATION_NETWORK_NAMES = [
     "UniDepth_mono",
     "MoGe_mono",
     "DepthAnything3_mono",
-    "DepthAnything3_stereo",
     "DEFOM_stereo",
     "FoundationStereo",
     "S2M2_stereo",

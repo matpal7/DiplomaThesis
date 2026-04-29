@@ -2,73 +2,8 @@ from pathlib import Path
 
 import numpy as np
 import cv2
-from matplotlib import pyplot as plt
 
 from code.image import load_rgb_depth_pairs
-
-
-def visualize_depth(
-    depth: np.ndarray,
-    vmin: float = None,
-    vmax: float = None,
-    show: bool = True,
-    save_path: str = None,
-    cmap: str = "turbo",
-):
-    """
-    Visualize depth map using matplotlib with colorbar.
-
-    Parameters
-    ----------
-    depth : np.ndarray
-        2D depth map
-    vmin : float | None
-    vmax : float | None
-    show : bool
-    save_path : str | None
-    cmap : str
-        matplotlib colormap (e.g. 'turbo', 'viridis', 'plasma')
-    """
-
-    if depth.ndim != 2:
-        raise ValueError("Depth map must be 2D")
-
-    depth = depth.astype(np.float32)
-    depth = depth * 0.001
-    valid_mask = np.isfinite(depth)
-
-    if not np.any(valid_mask):
-        raise ValueError("No valid depth values")
-
-    if vmin is None:
-        vmin = float(np.percentile(depth[valid_mask], 2))
-
-    if vmax is None:
-        vmax = float(np.percentile(depth[valid_mask], 98))
-
-    print("min:", np.percentile(depth[valid_mask], 2))
-    print("max:", np.percentile(depth[valid_mask], 98))
-    print("mean:", depth[valid_mask].mean())
-
-    # mask invalid values
-    depth_vis = depth.copy()
-    depth_vis[~valid_mask] = np.nan
-
-    plt.figure(figsize=(8, 6))
-    im = plt.imshow(depth_vis, cmap=cmap, vmin=vmin, vmax=vmax)
-    plt.colorbar(im, fraction=0.046, pad=0.04, label="Depth [m]")
-
-    plt.title("Depth visualization")
-    plt.axis("off")
-
-    if save_path is not None:
-        plt.savefig(save_path, bbox_inches="tight", dpi=200)
-
-    if show:
-        plt.show()
-    else:
-        plt.close()
-
 
 def colorize_depth(
     depth_m: np.ndarray,
