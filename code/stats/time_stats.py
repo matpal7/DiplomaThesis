@@ -6,23 +6,20 @@ from scipy import stats
 import pandas as pd
 from tabulate import tabulate
 
-from code.prepare_paths import get_depth_estimation_network_names
+from code.prepare_paths import get_depth_estimation_network
 
 parent_dir = Path(__file__).resolve().parents[3]
 date = "24042026"
 
-nn_names = get_depth_estimation_network_names()
+nn_names = get_depth_estimation_network()
 
 rows = []
 
-for nn in nn_names:
-    out_dir = parent_dir / "out" / f"out_{date}" / "depth_estimation" / nn
+for nn_key, nn_value in nn_names.items():
+    out_dir = parent_dir / "out" / f"out_{date}" / "depth_estimation" / nn_key
     stats_path = out_dir / "run_stats.json"
 
-    arr = nn.split("_")
-    nn_label = arr[0]
-    if nn_label == "DepthAnything3":
-        nn_label += " " + arr[1]
+    nn_label =  nn_value
 
     if not stats_path.exists():
         print(f"Skipping {nn_label}: missing {stats_path}")

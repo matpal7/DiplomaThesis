@@ -80,7 +80,7 @@ def colorize_depth(
 
 if __name__ == '__main__':
     parent_dir = Path(__file__).resolve().parents[2]
-    date = "27032026"
+    date = "24042026"
 
     dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
     relative_pose_dir = dataset_dir / "stereo_4k_depth"
@@ -97,8 +97,8 @@ if __name__ == '__main__':
 
     def label(img, text):
         out = img.copy()
-        cv2.putText(out, text, (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(out, text, (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0),       1, cv2.LINE_AA)
+        # cv2.putText(out, text, (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2, cv2.LINE_AA)
+        # cv2.putText(out, text, (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0),       1, cv2.LINE_AA)
         return out
 
     for img_zed, depth_zed, img_realsense, depth_realsense in zip(
@@ -140,7 +140,6 @@ if __name__ == '__main__':
         # ── combine and display ───────────────────────────────────────────────
         w = min(top_row.shape[1], bottom_row.shape[1])
         combined = cv2.vconcat([top_row[:, :w], bottom_row[:, :w]])
-        combined = cv2.cvtColor(combined, cv2.COLOR_RGB2BGR)
 
         cv2.imshow("ZED Mini vs RealSense - RGB & Depth", combined)
         cv2.waitKey(0)

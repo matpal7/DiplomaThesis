@@ -3,25 +3,22 @@ from pathlib import Path
 
 import plotly.graph_objects as go
 
-from code.prepare_paths import get_depth_estimation_network_names
+from code.prepare_paths import get_depth_estimation_network
 
 parent_dir = Path(__file__).resolve().parents[3]
 date = "24042026"
 
-nn_names = get_depth_estimation_network_names()
+nn_names = get_depth_estimation_network()
 
 fig = go.Figure()
 
 max_len = 0
 
-for nn in nn_names:
-    out_dir = parent_dir / "out" / f"out_{date}" / "depth_estimation" / nn
+for nn_key, nn_value in nn_names.items():
+    out_dir = parent_dir / "out" / f"out_{date}" / "depth_estimation" / nn_key
     stats_path = out_dir / "run_stats.json"
 
-    arr = nn.split("_")
-    nn_label = arr[0]
-    if nn_label == "DepthAnything3":
-        nn_label += " " + arr[1]
+    nn_label = nn_value
 
     if not stats_path.exists():
         print(f"Skipping {nn_label}: missing {stats_path}")
@@ -71,7 +68,7 @@ fig.update_layout(
     height=600,
 )
 
-fig.update_xaxes(tickmode="linear", dtick=10, range=[1, max_len])
+fig.update_xaxes(tickmode="linear", dtick=20, range=[1, max_len])
 fig.update_yaxes(tickformat=".2f", dtick=0.25)
 
 fig.show()

@@ -1,14 +1,16 @@
 from pathlib import Path
 
 
-DEPTH_ESTIMATION_NETWORK_NAMES = [
-    "UniDepth_mono",
-    "MoGe_mono",
-    "DepthAnything3_mono",
-    "DEFOM_stereo",
-    "FoundationStereo",
-    "S2M2_stereo",
-]
+DEPTH_ESTIMATION_NETWORKS = {
+    "UniDepth_mono":         "UniDepth",
+    "MoGe_mono":             "MoGe",
+    "DepthAnything3_mono":   "DA3",
+    "BridgeDepth_rvc":       "BridgeDepth (RVC)",
+    "BridgeDepth_middlebury":"BridgeDepth (Middlebury)",
+    "DEFOM_stereo":          "DEFOM-Stereo",
+    "FoundationStereo":      "FoundationStereo",
+    "S2M2_stereo":           "S2M2",
+}
 def build_paths(root_dir:Path, date: str, model_name: str) -> tuple[Path, Path, Path]:
     img_dir = root_dir / "datasets" / f"dataset_{date}" / f"stereo_4k_depth" / "rgb"
     calib_dict_file = root_dir / "out" / f"out_{date}" / "cameras_parameters" / "calib_data.npy"
@@ -75,5 +77,5 @@ def prepare_depth_comparison_paths(
         depth_comparison_dir,
     )
 
-def get_depth_estimation_network_names():
-    return DEPTH_ESTIMATION_NETWORK_NAMES.copy()
+def get_depth_estimation_network():
+    return DEPTH_ESTIMATION_NETWORKS

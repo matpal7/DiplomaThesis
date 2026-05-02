@@ -33,8 +33,8 @@ def show_undistorted_images(calib_dict, img_dir, scale=4, max_imgs=None):
                 display_d = img_d.img
 
         img_concat_h = cv2.hconcat([display_l, display_r])
-        for y in range(0, img_concat_h.shape[0], 40):
-            cv2.line(img_concat_h, (0, y), (img_concat_h.shape[1], y), (0, 255, 0), 1)
+        # for y in range(0, img_concat_h.shape[0], 40):
+        #     cv2.line(img_concat_h, (0, y), (img_concat_h.shape[1], y), (0, 255, 0), 1)
         cv2.imshow("Undistorted images", img_concat_h)
         if img_d is not None:
             cv2.imshow("Realsense image", display_d)
@@ -71,12 +71,13 @@ def undistorted_image_left(img, calib_dict):
 
 
 if __name__ == '__main__':
-    parent_dir = Path(__file__).resolve().parent.parent
+    parent_dir = Path(__file__).resolve().parent.parent.parent
+    date = "24042026"
 
-    dataset_dir = parent_dir / "dataset_24042026"
-    calib_imgs_dir = dataset_dir / "stereo_4k_relative_pose" / "rgb"
+    dataset_dir = parent_dir / f"dataset_{date}"
+    calib_imgs_dir = dataset_dir / "stereo_4k_depth" / "rgb"
 
-    out_dir = parent_dir / "out" / "cameras_parameters"
+    out_dir = parent_dir / "out" / f"out_{date}"/ "cameras_parameters"
 
     calib_dict = load_dict(out_dir / "calib_data.npy")
 
