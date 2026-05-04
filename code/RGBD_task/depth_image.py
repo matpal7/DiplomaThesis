@@ -36,7 +36,7 @@ def batch_convert(input_dir, pattern="*.npy", max_depth_m=10.000):
         print("No .npy files found.")
         return
 
-    output_path = input_dir.parent / "depth_pngs"
+    output_path = input_dir.parent / "depth_vis"
     output_path.mkdir(parents=True, exist_ok=True)
 
     for npy_file in npy_files:
@@ -59,16 +59,32 @@ if __name__ == "__main__":
 
     # Default paths
     parent_dir = Path(__file__).resolve().parents[3]
-    date = "09042026"
+    date = "24042026"
 
-    if not args.input:
-        args.input = str(
-            parent_dir / "datasets" / f'dataset_{date}' / "cameras_statistic_model" / "scene_003" / "depth" )
-    if not args.output:
-        args.output = str(parent_dir / "out" / f"out_{date}" / "depth_visualized" )
+    scene_dir_main = parent_dir / 'out' / f"out_{date}" / "pose_estimation" / "depth_nn"
 
-    input_path = Path(args.input)
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    scenes = sorted(
+        [
+            folder.name
+            for folder in scene_dir_main.iterdir()
+            if folder.is_dir()
+        ],
+        key=lambda x: int(x.split('_')[-1])
+    )
+    print(scenes)
+    for scene in scenes:
+        input_path = scene_dir_main / scene / "depth"
+        print(input_path)
+        batch_convert(input_path)
 
-    batch_convert(input_path)
+    # if not args.input:
+    #     args.input = str(
+    #         parent_dir / "datasets" / f'dataset_{date}' / "cameras_statistic_model" / "scene_003" / "depth" )
+    # if not args.output:
+    #     args.output = str(parent_dir / "datasets" / f'dataset_{date}' / "cameras_statistic_model" / "scene_003" / "depth_vis" )
+    #
+    # input_path = Path(args.input)
+    # output_path = Path(args.output)
+    # output_path.parent.mkdir(parents=True, exist_ok=True)
+    #
+    # batch_convert(input_path)

@@ -56,7 +56,7 @@ def save_outputs(
     preview = cv2.hconcat([img_left, depth_vis])
 
     np.save(depth_path, depth)
-    # cv2.imwrite(str(out_dirs["vis"] / f"{img_number}_vis.png"),     depth_vis)
+    cv2.imwrite(str(out_dirs["vis"] / f"{img_number}_vis.png"),     depth_vis)
     cv2.imwrite(str(out_dirs["vis"] / f"{img_number}_preview.png"), preview)
     # logging.info("Saved depth: %s", depth_path)
 

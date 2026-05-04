@@ -27,7 +27,7 @@ def create_manual_mask(img_path, output_path, object_name: str):
 
     drawing = False
     erasing = False  # toggled by pressing R
-    radius = 15
+    radius = 45
     cursor = [-1, -1]
 
     def mouse_callback(event, x, y, flags, param):
@@ -137,8 +137,8 @@ def run(args):
     parent_dir = Path(__file__).resolve().parents[3]
     date = args.date
 
-    dataset_dir = parent_dir / "datasets" / f"dataset_{date}" / "stereo_4k_depth"
-    out_base    = parent_dir / "out" / f"out_{date}" / "masks"
+    dataset_dir = parent_dir / "out" / f"out_{date}" / "pose_estimation" / "undistorted_images_NICO"
+    out_base    = parent_dir / "out" / f"out_{date}" / "pose_estimation"/ "masks"
 
     scenes = sorted([d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith("scene_")])
     if not scenes:
@@ -150,12 +150,12 @@ def run(args):
 
     cancelled = False  # set to True when user presses ESC
 
-    for scene_dir in scenes[1:]:
+    for scene_dir in scenes:
         if cancelled:
             break
 
         scene_name = scene_dir.name
-        rgb_dir = scene_dir / "rgb"
+        rgb_dir = scene_dir
 
         if not rgb_dir.exists():
             print(f"⚠ No rgb/ dir in {scene_dir}, skipping.")
@@ -204,7 +204,7 @@ if __name__ == "__main__":
                         help="Dataset date string (e.g. 09042026)")
     parser.add_argument("--objects",  type=str, nargs="+", default=["apple", "orange", "lemon", "rubiks_cube", "scissors",  "chips_box", "wood_block"],
                         help="apple")
-    parser.add_argument("--suffix",   type=str, default="_realsense.png",
+    parser.add_argument("--suffix",   type=str, default="_left.png",
                         help="Image filename suffix to look for")
 
     parser.add_argument("--overwrite", action="store_true",

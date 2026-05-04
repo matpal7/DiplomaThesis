@@ -60,14 +60,10 @@ if __name__ == "__main__":
     parent_dir = Path(__file__).resolve().parents[3]
     date = "24042026"
 
-    create_depth_images_from_rgbd = False
-    scene_dir_main = parent_dir / 'out' / f"out_{date}" / "pose_estimation_depths"
-    subdir_name = "nn"
+    create_depth_images_from_rgbd = True
+    scene_dir_main = parent_dir / 'out' / f"out_{date}" / "pose_estimation" / "depth_nn"
 
-    if create_depth_images_from_rgbd:
-        scene_dir_main = parent_dir / 'datasets' / f"dataset_{date}" / "downstream_task"
-        subdir_name = "rgbd"
-    output_path_main = parent_dir / 'out' / f"out_{date}" / "pose_estimation_depths"
+    output_path_main = parent_dir / 'out' / f"out_{date}" / "pose_estimation" / "depth_nn"
 
 
     scenes = sorted(
@@ -81,6 +77,6 @@ if __name__ == "__main__":
     print(scenes)
     for scene in scenes:
         input_path = scene_dir_main / scene / "depth"
-        output_path = output_path_main / scene / "depth_vis" / subdir_name
+        output_path = output_path_main / scene / "depth_png"
         batch_convert(input_path, output_path)
 
