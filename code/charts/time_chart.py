@@ -59,8 +59,8 @@ for nn_key, nn_value in nn_names.items():
     )
 
 fig.update_layout(
-    title="Graf času inferencie pre jednotlivé obrázky",
-    xaxis_title="Poradové číslo vstupného obrázka",
+    title="Graf času inferencie pre jednotlivé snímky",
+    xaxis_title="Poradové číslo vstupnej snímky",
     yaxis_title="Čas inferencie (s)",
     template="plotly_white",
     showlegend=True,
