@@ -27,7 +27,7 @@ def create_manual_mask(img_path, output_path, object_name: str):
 
     drawing = False
     erasing = False  # toggled by pressing R
-    radius = 45
+    radius = 22
     cursor = [-1, -1]
 
     def mouse_callback(event, x, y, flags, param):
@@ -137,7 +137,7 @@ def run(args):
     parent_dir = Path(__file__).resolve().parents[3]
     date = args.date
 
-    dataset_dir = parent_dir / "out" / f"out_{date}" / "pose_estimation" / "undistorted_images_NICO"
+    dataset_dir = parent_dir / "datasets" / f"dataset_{date}" / "downstream_task"
     out_base    = parent_dir / "out" / f"out_{date}" / "pose_estimation"/ "masks"
 
     scenes = sorted([d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith("scene_")])
@@ -161,7 +161,7 @@ def run(args):
             print(f"⚠ No rgb/ dir in {scene_dir}, skipping.")
             continue
 
-        first_img = get_first_image(rgb_dir, suffix=args.suffix)
+        first_img = get_first_image(rgb_dir / "rgb", suffix=args.suffix)
         if first_img is None:
             print(f"⚠ No images with suffix '{args.suffix}' in {rgb_dir}, skipping.")
             continue
@@ -204,7 +204,7 @@ if __name__ == "__main__":
                         help="Dataset date string (e.g. 09042026)")
     parser.add_argument("--objects",  type=str, nargs="+", default=["apple", "orange", "lemon", "rubiks_cube", "scissors",  "chips_box", "wood_block"],
                         help="apple")
-    parser.add_argument("--suffix",   type=str, default="_left.png",
+    parser.add_argument("--suffix",   type=str, default="_zed.png",
                         help="Image filename suffix to look for")
 
     parser.add_argument("--overwrite", action="store_true",

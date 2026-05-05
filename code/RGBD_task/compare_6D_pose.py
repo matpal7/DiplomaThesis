@@ -294,7 +294,7 @@ def main() -> None:
     # ── Scene ────────────────────────────────────────────────────────────────
     parser.add_argument("--scene",             default="scene_001")
     parser.add_argument("--object",            dest="obj", default="rubiks_cube")
-    parser.add_argument("--rgbd-camera",       default="realsense",
+    parser.add_argument("--rgbd-camera",       default="zed",
                         help="Sub-folder name used for the RGBD camera results.")
     parser.add_argument("--point-in-object",   nargs=3, type=float,
                         default=[0.0, 0.0, 0.0], metavar=("X", "Y", "Z"),
@@ -311,7 +311,7 @@ def main() -> None:
     parser.add_argument("--rgbd-native-wh",       nargs=2, type=int, default=[1280, 720],
                         metavar=("W", "H"),
                         help="Resolution at which the RGBD camera was calibrated.")
-    parser.add_argument("--rgbd-inference-wh",    nargs=2, type=int, default=[640, 360],
+    parser.add_argument("--rgbd-inference-wh",    nargs=2, type=int, default=[576, 324],
                         metavar=("W", "H"),
                         help="Resolution at which FoundationPose ran on RGBD images.")
 
@@ -365,10 +365,10 @@ def main() -> None:
     print(f"T_rgbd_from_left (translation in m):\n{t_rgbd_from_left}\n")
 
     # ── Output root ───────────────────────────────────────────────────────────
-    save_dir = results_dir / "comparison"
+    save_dir = out_dir / "pose_estimation" / "results_comparison" / args.rgbd_camera
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    scenes = ["scene_001", "scene_002", "scene_005", "scene_006", "scene_009"]
+    scenes = ["scene_001", "scene_002", "scene_004", "scene_005", "scene_006", "scene_009"]
     objects = ["apple", "chips_box", "lemon", "orange", "rubiks_cube", "scissors", "wood_block"]
 
     p_obj_h = np.array([*args.point_in_object, 1.0], dtype=np.float64)

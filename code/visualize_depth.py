@@ -83,7 +83,7 @@ if __name__ == '__main__':
     date = "24042026"
 
     dataset_dir = parent_dir / 'datasets' / f"dataset_{date}"
-    relative_pose_dir = dataset_dir / "stereo_4k_depth"
+    relative_pose_dir = dataset_dir / "downstream_task"/ "scene_001"
     max_imgs = 10
 
     imgs_zed, depths_zed           = load_rgb_depth_pairs(relative_pose_dir, "zed",        max_imgs=max_imgs)
