@@ -8,6 +8,27 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
+OBJECT_TRANSLATIONS_SK = {
+    "apple": "jablko",
+    "chips_box": "krabica čipsov",
+    "lemon": "citrón",
+    "orange": "pomaranč",
+    "rubiks_cube": "Rubikova kocka",
+    "scissors": "nožnice",
+    "wood_block": "drevený kváder",
+}
+
+OBJECT_ORDER_SK = [
+    "jablko",
+    "citrón",
+    "pomaranč",
+    "Rubikova kocka",
+    "krabica čipsov",
+    "drevený kváder",
+    "nožnice",
+]
+
+
 def _load_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Chýba vstupný súbor: {path}")
@@ -19,18 +40,88 @@ def _save_figure(fig: go.Figure, html_path: Path, png_path: Path) -> None:
     print(f"[INFO] Saved → {html_path}")
 
 
+def _add_slovak_object_names(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["object_sk"] = df["object"].map(OBJECT_TRANSLATIONS_SK).fillna(df["object"])
 
-def build_heatmap(summary_df: pd.DataFrame, out_dir: Path, metric: str = "err3d_mean_m") -> None:
-    heat = summary_df.pivot(index="object", columns="scene", values=metric)
-    heat = heat.sort_index()
+    df["object_sk"] = pd.Categorical(
+        df["object_sk"],
+        categories=OBJECT_ORDER_SK,
+        ordered=True,
+    )
+
+    return df
+
+
+def print_summary_per_scene_object(summary_df: pd.DataFrame) -> None:
+    required_columns = {
+        "scene",
+        "object",
+        "n_frames",
+        "err3d_mean_m",
+        "err3d_median_m",
+        "err3d_std_m",
+    }
+
+    missing = required_columns - set(summary_df.columns)
+    if missing:
+        raise ValueError(f"V CSV súbore chýbajú stĺpce: {sorted(missing)}")
+
+    df = _add_slovak_object_names(summary_df)
+    df = df.sort_values(["scene", "object_sk"])
+
+    print("\nSúhrn 3D chyby podľa scény a objektu")
+    print("─" * 95)
+    print(
+        f"{'Scéna':<12} "
+        f"{'Objekt':<18} "
+        f"{'Framy':>8} "
+        f"{'Priemer [cm]':>14} "
+        f"{'Medián [cm]':>14} "
+        f"{'Std [cm]':>12}"
+    )
+    print("─" * 95)
+
+    for _, row in df.iterrows():
+        print(
+            f"{row['scene']:<12} "
+            f"{str(row['object_sk']):<18} "
+            f"{int(row['n_frames']):>8} "
+            f"{row['err3d_mean_m'] * 100.0:>14.2f} "
+            f"{row['err3d_median_m'] * 100.0:>14.2f} "
+            f"{row['err3d_std_m'] * 100.0:>12.2f}"
+        )
+
+    print("─" * 95)
+
+
+def build_heatmap(
+    summary_df: pd.DataFrame,
+    out_dir: Path,
+    metric: str = "err3d_mean_m",
+) -> None:
+    summary_df = _add_slovak_object_names(summary_df)
+
+    heat = summary_df.pivot(
+        index="object_sk",
+        columns="scene",
+        values=metric,
+    )
+
+    heat = heat.dropna(how="all")
 
     fig = px.imshow(
         heat * 100.0,
-        labels={"color": "Priemerná 3D chyba [cm]", "x": "Scéna", "y": "Objekt"},
+        labels={
+            "color": "Priemerná 3D chyba [cm]",
+            "x": "Scéna",
+            "y": "Objekt",
+        },
         text_auto=".1f",
         color_continuous_scale="Viridis",
         aspect="auto",
     )
+
     fig.update_layout(
         title="Heatmapa priemernej 3D chyby (objekt × scéna)",
         template="plotly_white",
@@ -43,25 +134,33 @@ def build_heatmap(summary_df: pd.DataFrame, out_dir: Path, metric: str = "err3d_
     _save_figure(fig, html_path, png_path)
 
 
-def build_reprojection_frame_chart_all_scenes(all_frames_df: pd.DataFrame, out_dir: Path) -> None:
+def build_reprojection_frame_chart_all_scenes(
+    all_frames_df: pd.DataFrame,
+    out_dir: Path,
+) -> None:
     df = all_frames_df.copy()
+
     if df.empty:
         raise ValueError("Vstupný dataframe neobsahuje žiadne dáta.")
 
-    df = df.sort_values(["scene", "object", "frame_id"])
+    df = _add_slovak_object_names(df)
+    df = df.sort_values(["scene", "object_sk", "frame_id"])
 
     fig = px.line(
         df,
         x="frame_id",
         y="err_2d_px",
-        color="object",
+        color="object_sk",
         facet_col="scene",
         facet_col_wrap=2,
         markers=True,
+        category_orders={
+            "object_sk": OBJECT_ORDER_SK,
+        },
         labels={
             "frame_id": "Frame ID",
             "err_2d_px": "Reprojekčná chyba [px]",
-            "object": "Objekt",
+            "object_sk": "Objekt",
             "scene": "Scéna",
         },
         title="Reprojekčná chyba cez frame id pre všetky scény",
@@ -82,11 +181,22 @@ def build_reprojection_frame_chart_all_scenes(all_frames_df: pd.DataFrame, out_d
     _save_figure(fig, html_path, png_path)
 
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Vizualizácie pre compare_6D_pose výstupy.")
-    parser.add_argument("--root", type=Path, default=Path("out/out_24042026/pose_estimation/results_comparison"))
-    parser.add_argument("--scene", type=str, default="scene_001", help="Scéna pre frame chart reprojekčnej chyby.")
+    parser = argparse.ArgumentParser(
+        description="Vizualizácie pre compare_6D_pose výstupy."
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("out/out_24042026/pose_estimation/results_comparison"),
+    )
+    parser.add_argument(
+        "--scene",
+        type=str,
+        default="scene_001",
+        help="Scéna pre frame chart reprojekčnej chyby.",
+    )
+
     args = parser.parse_args()
 
     parent_dir = Path(__file__).resolve().parents[3]
@@ -98,6 +208,8 @@ def main() -> None:
 
     summary_df = _load_csv(root / "summary_per_scene_object.csv")
     all_frames_df = _load_csv(root / "all_frames.csv")
+
+    print_summary_per_scene_object(summary_df)
 
     build_heatmap(summary_df, out_dir)
     build_reprojection_frame_chart_all_scenes(all_frames_df, out_dir)

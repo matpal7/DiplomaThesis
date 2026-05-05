@@ -292,9 +292,7 @@ def main() -> None:
                         help="Output CSV path.  Defaults to results-dir/comparison_<scene>_<obj>.csv")
 
     # ── Scene ────────────────────────────────────────────────────────────────
-    parser.add_argument("--scene",             default="scene_001")
-    parser.add_argument("--object",            dest="obj", default="rubiks_cube")
-    parser.add_argument("--rgbd-camera",       default="zed",
+    parser.add_argument("--rgbd-camera",       default="realsense",
                         help="Sub-folder name used for the RGBD camera results.")
     parser.add_argument("--point-in-object",   nargs=3, type=float,
                         default=[0.0, 0.0, 0.0], metavar=("X", "Y", "Z"),
@@ -445,6 +443,7 @@ def main() -> None:
                     "rgbd_xfer_z_m": float(point_rgbd_xfer[2]),
                     "err_translation_m": err_t_m,
                     "err_rotation_deg": err_R_deg,
+
                 }
                 rows.append(row)
 
